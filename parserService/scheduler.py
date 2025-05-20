@@ -1,4 +1,5 @@
 import asyncio
+import os
 import threading
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +26,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Загрузка конфигурации
-config = configparser.ConfigParser()
-config.read('config.ini')
-BOT_TOKEN = config["TELEGRAM_BOT"]["token"]
+
+BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 
 class ParserWorker:

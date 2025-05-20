@@ -1,0 +1,87 @@
+name: Deploy to my little vps
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches: 
+      - main
+
+permissions:
+  packages: write
+
+jobs:
+  build_and_push_parser_service:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: https://ghcr.io
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.GH_TOKEN }}
+      - name: Build and push Docker parser image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./parserService/
+          push: true
+          tags: |
+            ghcr.io/patersss/avitoparserservice:latest
+            ghcr.io/patersss/avitoparserservice:${{ github.sha }}
+  
+  build_and_push_bot_service:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: https://ghcr.io
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.GH_TOKEN }}
+      - name: Build and push Docker bot image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./BotService/
+          push: true
+          tags: |
+            ghcr.io/patersss/avitobotservice:latest
+            ghcr.io/patersss/avitobotservice:${{ github.sha }}
+
+  deploy_bot:
+    runs-on: ubuntu-latest
+    needs:
+      - build_and_push_parser_service
+      - build_and_push_bot_service
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: create env file
+      run: |
+        echo "GIT_COMMIT_HASH=${{ github.sha }}" >> ./envfile
+        echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> ./envfile
+        echo "DB_USER=${{ secrets.DB_USER }}" >> ./envfile
+        echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> ./envfile
+    
+    - name: Docker Stack Deploy
+      uses: cssnr/stack-deploy-action@v1
+      with:
+        name: parserbot
+        file: docker-stack.yaml
+        host: 176.98.178.227
+        user: ${{ secrets.VPS_USER }}
+        ssh_key: ${{ secrets.SSH_PRIVATE_KEY }}
+        env_file: ./envfile
+        registry_auth: true
+        registry_host: "ghcr.io"
+        registry_user: ${{ secrets.DEPLOY_USER }}
+        registry_pass: ${{ secrets.GH_TOKEN }}
+

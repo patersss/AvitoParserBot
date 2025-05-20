@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: avito_parser
+      
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - avito_net
+
+  parser_service:
+    image: ghcr.io/patersss/avitoparserservice:${GIT_COMMIT_HASH:-latest}  
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: avito_parser
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+    depends_on:
+      - db
+    networks:
+      - avito_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      update_config:
+        order: start-first
+
+
+  bot_handle_service:
+    image: ghcr.io/patersss/avitobotservice:${GIT_COMMIT_HASH:-latest}  
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${{ secretsDB_PASSWORD}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: avito_parser
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+    depends_on:
+      - parser_service
+    networks:
+      - avito_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      update_config:
+        order: start-first
+
+volumes:
+  postgres_data:
+
+networks:
+  avito_net:
+    driver: overlay

@@ -23,9 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Загрузка конфигурации
 try:
-    config = configparser.ConfigParser()
-    config.read('config.ini')
-    BOT_TOKEN = config['TELEGRAM_BOT']['token']
+    BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
     logger.info("Конфигурация успешно загружена")
 except Exception as e:
     logger.error(f"Ошибка при загрузке конфигурации: {str(e)}")

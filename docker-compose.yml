@@ -18,6 +18,7 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: avito_parser
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
     depends_on:
       - db
   bot_handle_service:
@@ -28,6 +29,7 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: avito_parser
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
     depends_on:
       - parser_service
 
