@@ -1,0 +1,8 @@
+.gitignore
+__pycache__
+venv/
+.idea/
+.dockerignore
+plans.txt
+scheduler.log
+идеи для текста курсача.txt

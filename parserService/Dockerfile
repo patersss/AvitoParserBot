@@ -1,24 +1,40 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
-# Установка необходимых пакетов
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     wget \
+    curl \
+    unzip \
     gnupg \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y \
-    google-chrome-stable \
+    ca-certificates \
+    libnss3 \
+    libxss1 \
+    libappindicator1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libgbm-dev \
+    libxshmfence-dev \
+    fonts-liberation \
+    libu2f-udev \
+    xdg-utils \
+    libudev1 \
+    dbus \
     && rm -rf /var/lib/apt/lists/*
 
-# Копирование файлов проекта
-COPY requirements.txt .
-COPY . .
+# Скачиваем и устанавливаем Chrome напрямую
+RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get update && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb \
+    && rm -rf /var/lib/apt/lists/*
 
 # Установка зависимостей Python
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Создание и инициализация базы данных при запуске контейнера
-CMD ["python", "init_db.py"] 
+# Копирование проекта
+COPY . .
+
+CMD ["python", "scheduler.py"]

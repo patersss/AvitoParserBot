@@ -158,8 +158,12 @@ class TaskScheduler:
                                 )
                                 user = result.scalar_one()
                                 if user:
-                                    logger.info(f"Отправляем {len(new_posts)} сообщений пользователю {user.id}")
-                                    for post in new_posts:
+                                    logger.info(f"Отправляем {10 if len(new_posts) >= 10 else len(new_posts) } сообщений пользователю {user.id}")
+                                    for number, post in enumerate(new_posts):
+                                        
+                                        if number >= 10: 
+                                            break
+
                                         message = f"🏠 {post['name']}\n"
                                         message += f"💰 Цена: {post['price']}\n\n"
                                         message += f"🔗 {post['url']}\n"

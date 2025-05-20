@@ -22,7 +22,20 @@ class AvitoParser:
 
     async def setup_driver(self):
         """Инициализация драйвера Chrome"""
-        self.driver = uc.Chrome()
+        options = uc.ChromeOptions()
+        options.add_argument("--headless=new")  # Новый headless-режим
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-sync")
+        options.add_argument("--metrics-recording-only")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--mute-audio")
+        options.add_argument("--remote-debugging-port=9222")
+        self.driver = uc.Chrome(options=options)
 
     async def get_existing_posts(self) -> List[str]:
         """Получение списка существующих post_id для задачи"""

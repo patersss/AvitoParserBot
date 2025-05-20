@@ -7,13 +7,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: avito_parser
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  app:
-    build: .
+  parser_service:
+    build: ./parserService/
     environment:
       DB_USER: postgres
       DB_PASSWORD: postgres
@@ -22,8 +20,16 @@ services:
       DB_NAME: avito_parser
     depends_on:
       - db
-    volumes:
-      - .:/app
+  bot_handle_service:
+    build: ./BotService/
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: avito_parser
+    depends_on:
+      - parser_service
 
 volumes:
   postgres_data: 
