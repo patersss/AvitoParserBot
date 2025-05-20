@@ -1,0 +1,14 @@
+# ORM и база данных
+SQLAlchemy>=2.0,<2.1
+asyncpg>=0.29
+alembic>=1.13
+
+# Telegram
+aiogram>=3.0.0
+
+# Утилиты
+python-dotenv==1.0.1
+
+selenium>=4.0.0
+undetected-chromedriver>=3.5.3
+requests>=2.31.0
