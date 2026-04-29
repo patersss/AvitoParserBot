@@ -7,3 +7,4 @@ scheduler.log
 .idea
 .env
 test-setup.txt
+debug_html/
