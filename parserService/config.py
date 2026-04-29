@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -28,7 +29,16 @@ class Settings:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     )
+    youla_cookie_header: str = os.getenv("YOULA_COOKIES") or os.getenv("YOULA_COOKIE_HEADER", "")
+    youla_cookies_json: str = os.getenv("YOULA_COOKIES_JSON", "")
+    youla_user_agent: str = os.getenv(
+        "YOULA_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
     scheduler_batch_size: int = int(os.getenv("SCHEDULER_BATCH_SIZE", "20"))
+    parser_debug_html: bool = os.getenv("PARSER_DEBUG_HTML", "false").lower() == "true"
+    parser_debug_dir: str = os.getenv("PARSER_DEBUG_DIR", "debug_html")
 
     @property
     def avito_cookies(self) -> dict[str, str]:
@@ -37,6 +47,10 @@ class Settings:
     @property
     def cian_cookies(self) -> dict[str, str]:
         return self._parse_cookies(self.cian_cookie_header, self.cian_cookies_json)
+
+    @property
+    def youla_cookies(self) -> dict[str, str]:
+        return self._parse_cookies(self.youla_cookie_header, self.youla_cookies_json)
 
     def _parse_cookies(self, cookie_header: str, cookies_json: str) -> dict[str, str]:
         if cookies_json:
@@ -58,6 +72,10 @@ class Settings:
             name, value = part.split("=", 1)
             cookies[name.strip()] = value.strip()
         return cookies
+
+    @property
+    def parser_debug_path(self) -> Path:
+        return Path(self.parser_debug_dir)
 
 
 settings = Settings()

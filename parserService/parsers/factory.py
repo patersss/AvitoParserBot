@@ -1,6 +1,7 @@
 from parsers.avito import AvitoParser
 from parsers.base import BaseParser
 from parsers.cian import CianParser
+from parsers.youla import YoulaParser
 
 
 class ParserFactory:
@@ -8,6 +9,7 @@ class ParserFactory:
         self._parsers: dict[str, BaseParser] = {
             AvitoParser.platform: AvitoParser(),
             CianParser.platform: CianParser(),
+            YoulaParser.platform: YoulaParser(),
         }
 
     @property
