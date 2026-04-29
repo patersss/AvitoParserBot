@@ -50,9 +50,21 @@ class RabbitMQClient:
         queue = await self.channel.declare_queue(settings.task_events_queue, durable=True)
 
         async def on_message(message: AbstractIncomingMessage):
-            async with message.process(requeue=True):
+            try:
                 payload = json.loads(message.body.decode("utf-8"))
+            except json.JSONDecodeError:
+                logger.exception("Invalid JSON in task event message. Message will be rejected without requeue.")
+                await message.reject(requeue=False)
+                return
+
+            try:
                 await handler(payload)
+            except Exception:
+                logger.exception("Failed to process task event. Message will be requeued.")
+                await message.reject(requeue=True)
+                return
+
+            await message.ack()
 
         await queue.consume(on_message)
         logger.info("Consuming task events from queue %s", settings.task_events_queue)

@@ -6,3 +6,4 @@ scheduler.log
 .venv/
 .idea
 .env
+test-setup.txt

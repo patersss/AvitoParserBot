@@ -11,6 +11,7 @@ from messaging.rabbitmq import RabbitMQClient
 from models.Task import TaskCache
 from models.database import async_session, init_db
 from parsers.factory import ParserFactory
+from init_db import init_database
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,13 +89,17 @@ class TaskScheduler:
 
     async def get_tasks_to_run(self) -> list[TaskCache]:
         now = datetime.now(timezone.utc)
+        supported_platforms = sorted(self.parser_factory.supported_platforms)
         async with async_session() as session:
             result = await session.execute(
                 select(TaskCache).where(
                     TaskCache.is_active.is_(True),
+                    TaskCache.platform.in_(supported_platforms),
                     TaskCache.next_run_at <= now,
                     or_(TaskCache.end_date.is_(None), TaskCache.end_date >= now),
                 )
+                .order_by(TaskCache.next_run_at.asc())
+                .limit(settings.scheduler_batch_size)
             )
             return list(result.scalars().all())
 
@@ -126,7 +131,7 @@ class TaskScheduler:
 
 
 async def main():
-    await init_db()
+    await init_database()
 
     rabbitmq = RabbitMQClient()
     await rabbitmq.connect()

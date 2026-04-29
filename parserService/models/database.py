@@ -12,7 +12,6 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "avito_parser")
 DB_ECHO = os.getenv("DB_ECHO", "false").lower() == "true"
-print(DB_USER, " ", DB_PASSWORD)
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 engine = create_async_engine(
@@ -39,7 +38,6 @@ async def init_db():
     """Create parser service tables declared by imported ORM models."""
     from models.Post import FoundListing  # noqa: F401
     from models.Task import TaskCache  # noqa: F401
-
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
