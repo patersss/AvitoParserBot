@@ -3,5 +3,6 @@ config.ini
 plans.txt
 scheduler.log
 идеи для текста курсача.md
-venv/
+.venv/
 .idea
+.env
