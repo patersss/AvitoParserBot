@@ -1,434 +1,739 @@
 import asyncio
+import json
 import logging
-import configparser
-from datetime import datetime, timedelta
-from typing import Dict
 import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from urllib.parse import quote_plus
 
-from aiogram import Bot, Dispatcher, types
+import aio_pika
+import aiohttp
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeDefault
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from aiogram.types import BotCommand, BotCommandScopeDefault, InlineKeyboardButton, InlineKeyboardMarkup
+from dotenv import load_dotenv
 
-from models.database import async_session
-from models.User import User
-from models.Task import Task
-from models.Post import Post
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Загрузка конфигурации
-try:
-    BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
-    logger.info("Конфигурация успешно загружена")
-except Exception as e:
-    logger.error(f"Ошибка при загрузке конфигурации: {str(e)}")
-    raise
 
-# Инициализация бота и диспетчера
-try:
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
-    logger.info("Бот и диспетчер успешно инициализированы")
-except Exception as e:
-    logger.error(f"Ошибка при инициализации бота: {str(e)}")
-    raise
+@dataclass(frozen=True)
+class Settings:
+    telegram_token: str = os.getenv("TELEGRAM_TOKEN", "")
+    api_core_base_url: str = os.getenv("API_CORE_BASE_URL", "http://localhost:8000").rstrip("/")
+    service_api_token: str = os.getenv("SERVICE_API_TOKEN", "dev-service-token")
+    site_login_url: str = os.getenv("SITE_LOGIN_URL", "http://localhost:3000/login?token={token}")
+    rabbitmq_url: str = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+    notification_exchange: str = os.getenv("NOTIFICATION_EXCHANGE", "notification.events")
+    notification_channel_routing_key: str = os.getenv(
+        "NOTIFICATION_CHANNEL_ROUTING_KEY",
+        "notification.channel.upserted",
+    )
+    request_timeout_seconds: int = int(os.getenv("BOT_HTTP_TIMEOUT_SECONDS", "15"))
+    min_interval_minutes: int = int(os.getenv("MIN_TASK_INTERVAL_MINUTES", "10"))
+    max_task_days: int = int(os.getenv("MAX_TASK_DAYS", "365"))
 
-# Словарь для хранения временных данных пользователей
-user_states: Dict[int, Dict] = {}
+
+settings = Settings()
+if not settings.telegram_token:
+    raise RuntimeError("TELEGRAM_TOKEN is required")
+
+bot = Bot(token=settings.telegram_token)
+dp = Dispatcher()
+user_states: dict[int, dict[str, Any]] = {}
+
+
+class ApiCoreError(Exception):
+    def __init__(self, status: int, message: str):
+        self.status = status
+        self.message = message
+        super().__init__(f"ApiCoreService returned {status}: {message}")
+
+
+class ApiCoreClient:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.session: aiohttp.ClientSession | None = None
+
+    async def connect(self) -> None:
+        timeout = aiohttp.ClientTimeout(total=self.settings.request_timeout_seconds)
+        self.session = aiohttp.ClientSession(timeout=timeout)
+
+    async def close(self) -> None:
+        if self.session:
+            await self.session.close()
+
+    async def upsert_telegram_user(self, telegram_user: types.User, chat_id: int) -> dict:
+        payload = {
+            "telegram_user_id": telegram_user.id,
+            "chat_id": chat_id,
+            "username": telegram_user.username or telegram_user.full_name,
+            "avatar_url": None,
+        }
+        return await self._request(
+            "POST",
+            "/telegram/users/upsert",
+            json_data=payload,
+            service_auth=True,
+        )
+
+    async def create_site_login_token(self, telegram_user_id: int, chat_id: int) -> dict:
+        return await self._request(
+            "POST",
+            "/telegram/login-token",
+            json_data={"telegram_user_id": telegram_user_id, "chat_id": chat_id},
+            service_auth=True,
+        )
+
+    async def create_user_access_token(self, telegram_user: types.User, chat_id: int) -> tuple[str, dict]:
+        await self.upsert_telegram_user(telegram_user, chat_id)
+        login_token = await self.create_site_login_token(telegram_user.id, chat_id)
+        auth = await self._request("POST", "/auth/telegram-token", json_data={"token": login_token["token"]})
+        return auth["access_token"], auth["user"]
+
+    async def list_tasks(self, access_token: str, *, include_inactive: bool = True) -> list[dict]:
+        return await self._request(
+            "GET",
+            "/tasks",
+            access_token=access_token,
+            params={"include_inactive": str(include_inactive).lower(), "limit": "100"},
+        )
+
+    async def create_task(self, access_token: str, payload: dict) -> dict:
+        return await self._request("POST", "/tasks", json_data=payload, access_token=access_token)
+
+    async def update_task(self, access_token: str, task_id: str, payload: dict) -> dict:
+        return await self._request("PATCH", f"/tasks/{task_id}", json_data=payload, access_token=access_token)
+
+    async def delete_task(self, access_token: str, task_id: str) -> dict:
+        return await self._request("DELETE", f"/tasks/{task_id}", access_token=access_token)
+
+    async def refresh_task(self, access_token: str, task_id: str) -> dict:
+        return await self._request("POST", f"/tasks/{task_id}/refresh", access_token=access_token)
+
+    async def list_task_listings(self, access_token: str, task_id: str, *, limit: int = 10) -> list[dict]:
+        return await self._request(
+            "GET",
+            f"/tasks/{task_id}/listings",
+            access_token=access_token,
+            params={"limit": str(limit)},
+        )
+
+    async def list_listings(self, access_token: str, *, limit: int = 10) -> list[dict]:
+        return await self._request("GET", "/listings", access_token=access_token, params={"limit": str(limit)})
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_data: dict | None = None,
+        params: dict | None = None,
+        service_auth: bool = False,
+        access_token: str | None = None,
+    ):
+        if not self.session:
+            await self.connect()
+
+        headers = {"Accept": "application/json"}
+        if service_auth:
+            headers["X-Service-Token"] = self.settings.service_api_token
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+
+        url = f"{self.settings.api_core_base_url}{path}"
+        assert self.session is not None
+        async with self.session.request(method, url, json=json_data, params=params, headers=headers) as response:
+            text = await response.text()
+            data = {}
+            if text:
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    data = {"detail": text}
+            if response.status >= 400:
+                detail = data.get("detail") if isinstance(data, dict) else text
+                raise ApiCoreError(response.status, str(detail))
+            return data
+
+
+class NotificationEventPublisher:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.connection: aio_pika.RobustConnection | None = None
+        self.channel: aio_pika.RobustChannel | None = None
+        self.exchange: aio_pika.RobustExchange | None = None
+
+    async def connect(self) -> None:
+        self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
+        self.channel = await self.connection.channel()
+        self.exchange = await self.channel.declare_exchange(
+            self.settings.notification_exchange,
+            aio_pika.ExchangeType.TOPIC,
+            durable=True,
+        )
+        logger.info("Connected to RabbitMQ notification exchange")
+
+    async def close(self) -> None:
+        if self.connection:
+            await self.connection.close()
+
+    async def publish_telegram_channel(self, user: dict, telegram_user: types.User, chat_id: int) -> None:
+        if not self.exchange:
+            await self.connect()
+
+        payload = {
+            "event_type": "notification_channel.upserted",
+            "source_service": "BotService",
+            "user_id": user["id"],
+            "channel": {
+                "type": "telegram",
+                "config": {
+                    "telegram_user_id": telegram_user.id,
+                    "chat_id": chat_id,
+                    "username": telegram_user.username,
+                },
+                "is_active": True,
+            },
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+        }
+        message = aio_pika.Message(
+            body=json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
+            content_type="application/json",
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        )
+        assert self.exchange is not None
+        await self.exchange.publish(message, routing_key=self.settings.notification_channel_routing_key)
+
+
+api_core = ApiCoreClient(settings)
+notifications = NotificationEventPublisher(settings)
+
+
+def platform_keyboard(prefix: str = "add_platform") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Avito", callback_data=f"{prefix}:avito"),
+                InlineKeyboardButton(text="Cian", callback_data=f"{prefix}:cian"),
+                InlineKeyboardButton(text="Youla", callback_data=f"{prefix}:youla"),
+            ]
+        ]
+    )
+
+
+def task_keyboard(task: dict) -> InlineKeyboardMarkup:
+    task_id = task["id"]
+    active = bool(task.get("is_active"))
+    toggle_action = "pause" if active else "resume"
+    toggle_text = "Пауза" if active else "Возобновить"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Объявления", callback_data=f"task_listings:{task_id}"),
+                InlineKeyboardButton(text="Обновить", callback_data=f"task_refresh:{task_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="Название", callback_data=f"task_edit_name:{task_id}"),
+                InlineKeyboardButton(text="URL", callback_data=f"task_edit_url:{task_id}"),
+                InlineKeyboardButton(text="Интервал", callback_data=f"task_edit_interval:{task_id}"),
+            ],
+            [
+                InlineKeyboardButton(text=toggle_text, callback_data=f"task_{toggle_action}:{task_id}"),
+                InlineKeyboardButton(text="Удалить", callback_data=f"task_delete:{task_id}"),
+            ],
+        ]
+    )
+
+
+def tasks_picker_keyboard(tasks: list[dict], action: str) -> InlineKeyboardMarkup:
+    rows = []
+    for task in tasks:
+        name = task.get("name") or task["url"][:32]
+        rows.append([InlineKeyboardButton(text=name[:60], callback_data=f"{action}:{task['id']}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_task(task: dict) -> str:
+    status = "активна" if task.get("is_active") else "на паузе"
+    end_date = format_datetime(task.get("end_date")) if task.get("end_date") else "без даты окончания"
+    name = task.get("name") or "без названия"
+    return (
+        f"Задача: {name}\n"
+        f"Платформа: {task['platform']}\n"
+        f"Статус: {status}\n"
+        f"Интервал: {task['interval_minutes']} мин.\n"
+        f"До: {end_date}\n"
+        f"URL: {task['url']}\n"
+        f"ID: {task['id']}"
+    )
+
+
+def format_listing(listing: dict) -> str:
+    price = f"{listing['price']} руб." if listing.get("price") is not None else "цена не указана"
+    created_at = format_datetime(listing.get("created_at"))
+    return (
+        f"{listing.get('title') or 'Без названия'}\n"
+        f"{price}\n"
+        f"{listing['url']}\n"
+        f"Найдено: {created_at}"
+    )
+
+
+def format_datetime(value: str | None) -> str:
+    if not value:
+        return "не указано"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return parsed.astimezone().strftime("%d.%m.%Y %H:%M")
+
+
+def build_site_login_link(token: str) -> str:
+    encoded = quote_plus(token)
+    if "{token}" in settings.site_login_url:
+        return settings.site_login_url.format(token=encoded)
+    separator = "&" if "?" in settings.site_login_url else "?"
+    return f"{settings.site_login_url}{separator}token={encoded}"
+
+
+def validate_platform_url(platform: str, url: str) -> bool:
+    platform_domains = {"avito": "avito.ru", "cian": "cian.ru", "youla": "youla.ru"}
+    return platform_domains[platform] in url.lower()
+
+
+async def get_access_token_for_message(message: types.Message) -> str:
+    token, _user = await api_core.create_user_access_token(message.from_user, message.chat.id)
+    return token
+
+
+async def get_access_token_for_callback(callback: types.CallbackQuery) -> str:
+    assert callback.message is not None
+    token, _user = await api_core.create_user_access_token(callback.from_user, callback.message.chat.id)
+    return token
+
+
+async def send_api_error(target: types.Message, error: ApiCoreError) -> None:
+    if error.status == 403:
+        await target.answer("Доступ запрещён. Возможно, аккаунт заблокирован.")
+    elif error.status == 404:
+        await target.answer("Не нашёл нужные данные. Попробуйте /start и повторите действие.")
+    else:
+        await target.answer(f"ApiCoreService вернул ошибку: {error.message}")
+
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Обработчик команды /start"""
-    chat_id = message.chat.id
-    logger.info(f"Получена команда /start от чата {chat_id}")
-    
+async def cmd_start(message: types.Message) -> None:
     try:
-        # Проверяем существование пользователя в БД
-        async with async_session() as session:
-            # Ищем пользователя по chat_id
-            query = select(User).where(User.chat_id == chat_id)
-            result = await session.execute(query)
-            user = result.scalar_one_or_none()
-            
-            if not user:
-                logger.info(f"Создание нового пользователя с chat_id {chat_id}")
-                user = User(
-                    name=message.from_user.username,
-                    chat_id=chat_id
-                )
-                session.add(user)
-                await session.commit()
-            elif user.name != message.from_user.username:
-                # Обновляем имя пользователя если оно изменилось
-                logger.info(f"Обновление имени пользователя для chat_id {chat_id}")
-                user.name = message.from_user.username
-                await session.commit()
-        
-        await message.answer(
-            "Привет! Я бот для отслеживания объявлений на Авито.\n"
-            "Отправь мне ссылку на поиск Авито, и я буду отслеживать новые объявления.\n"
-            "Используй /help для получения справки."
-        )
-        logger.info(f"Приветственное сообщение отправлено в чат {chat_id}")
-    except Exception as e:
-        logger.error(f"Ошибка при обработке команды /start: {str(e)}")
-        await message.answer("Произошла ошибка при обработке команды. Пожалуйста, попробуйте позже.")
+        result = await api_core.upsert_telegram_user(message.from_user, message.chat.id)
+        await notifications.publish_telegram_channel(result["user"], message.from_user, message.chat.id)
+    except Exception:
+        logger.exception("Failed to initialize Telegram user")
+        await message.answer("Не удалось зарегистрировать Telegram-аккаунт. Попробуйте позже.")
+        return
+
+    await message.answer(
+        "Привет! Я помогу отслеживать новые объявления.\n\n"
+        "Что можно сделать:\n"
+        "/add - создать задачу парсинга\n"
+        "/tasks - посмотреть и управлять задачами\n"
+        "/listings - последние найденные объявления\n"
+        "/login - получить одноразовую ссылку для входа на сайт\n"
+        "/help - подробная справка"
+    )
+
 
 @dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    """Обработчик команды /help"""
-    chat_id = message.chat.id
-    help_text = (
-        "Доступные команды:\n"
-        "/start - Начать работу с ботом\n"
-        "/help - Показать эту справку\n"
-        "/add - Добавить новую задачу для отслеживания\n"
-        "/list - Показать список отслеживаемых задач\n"
-        "/remove - Удалить задачу из отслеживания\n\n"
-        "При добавлении задачи укажите:\n"
-        "1. Название задачи (от 3 до 50 символов)\n"
-        "2. Ссылку на поиск Авито\n"
-        "3. Количество дней для отслеживания\n"
-        "4. Интервал проверки в минутах (минимум 10 минут)\n\n"
-        "Управление задачами:\n"
-        "• В списке задач (/list) вы можете:\n"
-        "  - Изменить название задачи\n"
-        "  - Изменить интервал проверки\n"
-        "• Используйте /remove для удаления задачи"
+async def cmd_help(message: types.Message) -> None:
+    await message.answer(
+        "Команды:\n"
+        "/start - создать или обновить Telegram-профиль\n"
+        "/add - добавить задачу\n"
+        "/tasks или /list - список задач и кнопки управления\n"
+        "/listings - выбрать задачу и посмотреть найденные объявления\n"
+        "/remove - выбрать задачу для удаления\n"
+        "/login - одноразовая ссылка для входа на сайт\n"
+        "/cancel - отменить текущий ввод\n\n"
+        "Поддерживаемые платформы: Avito, Cian, Youla.\n"
+        "Минимальный интервал проверки: "
+        f"{settings.min_interval_minutes} минут."
     )
-    await message.answer(help_text)
-    logger.info(f"Справка отправлена в чат {chat_id}")
 
-@dp.message(Command("list"))
-async def cmd_list(message: types.Message):
-    """Обработчик команды /list"""
-    chat_id = message.chat.id
-    logger.info(f"Получена команда /list от чата {chat_id}")
-    
-    async with async_session() as session:
-        query_for_user = select(User).where(User.chat_id == chat_id)
-        result_for_user = await session.execute(query_for_user)
-        user_id = result_for_user.scalar_one().id
 
-        query = select(Task).where(Task.app_user_id == user_id, Task.is_active == True)
-        result = await session.execute(query)
-        tasks = result.scalars().all()
-        
-        if not tasks:
-            await message.answer("У вас нет активных задач отслеживания.")
-            return
-        
-        await message.answer("Ваши активные задачи:")
-        for task in tasks:
-            response = (
-                f"📝 Название: {task.task_name}\n"
-                f"🔗 Ссылка: {task.url}\n"
-                f"📅 Дата окончания отслеживания: {task.end_date}\n"
-                f"⏱ Интервал проверки: {task.interval} минут\n"
-                f"📊 ID задачи: {task.id}\n\n"
-            )
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"edit_name_{task.id}"),
-                    InlineKeyboardButton(text="⏱ Изменить интервал", callback_data=f"edit_interval_{task.id}")
-                ]
-            ])
-            await message.answer(response, reply_markup=keyboard)
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: types.Message) -> None:
+    user_states.pop(message.chat.id, None)
+    await message.answer("Ок, текущий ввод отменён.")
 
-@dp.callback_query(lambda c: c.data.startswith('edit_name_'))
-async def process_edit_name(callback_query: types.CallbackQuery):
-    """Обработка запроса на изменение названия задачи"""
-    chat_id = callback_query.message.chat.id
-    task_id = int(callback_query.data.split('_')[-1])
-    
-    user_states[chat_id] = {
-        "state": "waiting_new_name",
-        "task_id": task_id
-    }
-    
-    await callback_query.message.answer(
-        "Введите новое название для задачи (от 3 до 50 символов):"
-    )
-    await callback_query.answer()
 
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_new_name")
-async def process_new_name(message: types.Message):
-    """Обработка нового названия задачи"""
-    chat_id = message.chat.id
-    task_id = user_states[chat_id]["task_id"]
-    new_name = message.text.strip()
-    
-    if len(new_name) < 3 or len(new_name) > 50:
-        await message.answer("Название задачи должно быть от 3 до 50 символов.")
-        return
-    
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task:
-            old_name = task.task_name
-            task.task_name = new_name
-            await session.commit()
-            await message.answer(f"Название задачи изменено с '{old_name}' на '{new_name}'")
-            logger.info(f"Изменено название задачи {task_id} в чате {chat_id}")
-        else:
-            await message.answer("Задача не найдена или у вас нет прав на её редактирование.")
-    
-    del user_states[chat_id]
-
-@dp.callback_query(lambda c: c.data.startswith('edit_interval_'))
-async def process_edit_interval(callback_query: types.CallbackQuery):
-    """Обработка запроса на изменение интервала проверки"""
-    chat_id = callback_query.message.chat.id
-    task_id = int(callback_query.data.split('_')[-1])
-    
-    user_states[chat_id] = {
-        "state": "waiting_new_interval",
-        "task_id": task_id
-    }
-    
-    await callback_query.message.answer(
-        "Введите новый интервал проверки в минутах (минимум 10 минут):"
-    )
-    await callback_query.answer()
-
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_new_interval")
-async def process_new_interval(message: types.Message):
-    """Обработка нового интервала проверки"""
-    chat_id = message.chat.id
-    task_id = user_states[chat_id]["task_id"]
-    
+@dp.message(Command("login"))
+async def cmd_login(message: types.Message) -> None:
     try:
-        new_interval = int(message.text)
-        if new_interval < 10:
-            raise ValueError
-    except ValueError:
-        await message.answer("Пожалуйста, введите число не менее 10 минут.")
+        await api_core.upsert_telegram_user(message.from_user, message.chat.id)
+        token_payload = await api_core.create_site_login_token(message.from_user.id, message.chat.id)
+    except ApiCoreError as error:
+        await send_api_error(message, error)
         return
-    
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task:
-            old_interval = task.interval
-            task.interval = new_interval
-            await session.commit()
-            await message.answer(
-                f"Интервал проверки для задачи '{task.task_name}' изменен с {old_interval} на {new_interval} минут"
-            )
-            logger.info(f"Изменен интервал задачи {task_id} в чате {chat_id}")
-        else:
-            await message.answer("Задача не найдена или у вас нет прав на её редактирование.")
-    
-    del user_states[chat_id]
+    except Exception:
+        logger.exception("Failed to create site login token")
+        await message.answer("Не удалось создать ссылку для входа. Попробуйте позже.")
+        return
 
-@dp.message(Command("remove"))
-async def cmd_remove(message: types.Message):
-    """Обработчик команды /remove"""
-    chat_id = message.chat.id
-    logger.info(f"Получена команда /remove от чата {chat_id}")
-    
-    async with async_session() as session:
-        query_for_user = select(User).where(User.chat_id == chat_id)
-        result_for_user = await session.execute(query_for_user)
-        user_id = result_for_user.scalar_one().id
+    link = build_site_login_link(token_payload["token"])
+    expires_at = format_datetime(token_payload.get("expires_at"))
+    await message.answer(
+        "Одноразовая ссылка для входа на сайт:\n"
+        f"{link}\n\n"
+        f"Действует до: {expires_at}\n"
+        "Если ссылка уже использована, запросите новую командой /login."
+    )
 
-        query = select(Task).where(Task.app_user_id == user_id, Task.is_active == True)
-        result = await session.execute(query)
-        tasks = result.scalars().all()
-        
-        if not tasks:
-            await message.answer("У вас нет активных задач для удаления.")
-            return
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"Удалить: {task.task_name}", callback_data=f"remove_{task.id}")]
-            for task in tasks
-        ])
-        
-        await message.answer("Выберите задачу для удаления:", reply_markup=keyboard)
-
-@dp.callback_query(lambda c: c.data.startswith('remove_'))
-async def process_remove(callback_query: types.CallbackQuery):
-    """Обработка удаления задачи"""
-    chat_id = callback_query.message.chat.id
-    task_id = int(callback_query.data.split('_')[-1])
-    logger.info(f"Получен запрос на удаление задачи {task_id} из чата {chat_id}")
-    
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if task:
-            task_name = task.task_name
-            task.is_active = False
-            await session.commit()
-            await callback_query.message.answer(f"Задача '{task_name}' успешно удалена.")
-            logger.info(f"Задача {task_id} удалена из чата {chat_id}")
-        else:
-            await callback_query.message.answer("Задача не найдена или у вас нет прав на её удаление.")
-            logger.warning(f"Попытка удалить несуществующую задачу {task_id} из чата {chat_id}")
-    
-    await callback_query.answer()
 
 @dp.message(Command("add"))
-async def cmd_add(message: types.Message):
-    """Обработчик команды /add"""
-    chat_id = message.chat.id
-    logger.info(f"Получена команда /add от чата {chat_id}")
-    
-    # Проверяем количество активных задач
-    async with async_session() as session:
-        query_for_user = select(User).where(User.chat_id == chat_id)
-        result_for_user = await session.execute(query_for_user)
-        user_id = result_for_user.scalar_one().id
-        query = select(Task).where(Task.app_user_id == user_id, Task.is_active == True)
-        result = await session.execute(query)
-        active_tasks = result.scalars().all()
-        
-        if len(active_tasks) >= 5:
-            await message.answer("У вас уже максимальное количество отслеживаемых задач (5).")
+async def cmd_add(message: types.Message) -> None:
+    user_states[message.chat.id] = {"flow": "add", "step": "name"}
+    await message.answer("Введите название задачи.")
+
+
+@dp.message(Command("tasks", "list"))
+async def cmd_tasks(message: types.Message) -> None:
+    await show_tasks(message)
+
+
+@dp.message(Command("remove"))
+async def cmd_remove(message: types.Message) -> None:
+    try:
+        token = await get_access_token_for_message(message)
+        tasks = await api_core.list_tasks(token, include_inactive=True)
+    except ApiCoreError as error:
+        await send_api_error(message, error)
+        return
+
+    if not tasks:
+        await message.answer("У вас пока нет задач для удаления.")
+        return
+
+    await message.answer("Выберите задачу для удаления:", reply_markup=tasks_picker_keyboard(tasks, "task_delete"))
+
+
+@dp.message(Command("listings"))
+async def cmd_listings(message: types.Message) -> None:
+    try:
+        token = await get_access_token_for_message(message)
+        tasks = await api_core.list_tasks(token, include_inactive=True)
+    except ApiCoreError as error:
+        await send_api_error(message, error)
+        return
+
+    if not tasks:
+        listings = await api_core.list_listings(token, limit=10)
+        if not listings:
+            await message.answer("Пока нет найденных объявлений.")
             return
-    
-    user_states[chat_id] = {"state": "waiting_name"}
-    await message.answer("Пожалуйста, введите название для задачи:")
-
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_name")
-async def process_name(message: types.Message):
-    """Обработка названия задачи"""
-    chat_id = message.chat.id
-    task_name = message.text.strip()
-    
-    if len(task_name) < 3 or len(task_name) > 50:
-        await message.answer("Название задачи должно быть от 3 до 50 символов.")
+        await message.answer(format_listings(listings))
         return
-    
-    user_states[chat_id].update({
-        "task_name": task_name,
-        "state": "waiting_url"
-    })
-    await message.answer("Пожалуйста, отправьте ссылку на поиск Авито.")
 
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_url")
-async def process_url(message: types.Message):
-    """Обработка URL от пользователя"""
-    chat_id = message.chat.id
-    url = message.text
-    
-    if not url.startswith("https://www.avito.ru/"):
-        await message.answer("Пожалуйста, отправьте корректную ссылку на Авито.")
-        return
-    
-    user_states[chat_id].update({
-        "url": url,
-        "state": "waiting_days"
-    })
-    await message.answer("Укажите количество дней для отслеживания (1-30):")
+    await message.answer("Выберите задачу:", reply_markup=tasks_picker_keyboard(tasks, "task_listings"))
 
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_days")
-async def process_days(message: types.Message):
-    """Обработка количества дней"""
-    chat_id = message.chat.id
-    
+
+async def show_tasks(message: types.Message) -> None:
     try:
-        days = int(message.text)
-        if not 1 <= days <= 30:
-            raise ValueError
-    except ValueError:
-        await message.answer("Пожалуйста, введите число от 1 до 30.")
+        token = await get_access_token_for_message(message)
+        tasks = await api_core.list_tasks(token, include_inactive=True)
+    except ApiCoreError as error:
+        await send_api_error(message, error)
         return
-    
-    user_states[chat_id].update({
-        "days": days,
-        "state": "waiting_interval"
-    })
-    await message.answer("Укажите интервал проверки в минутах (минимум 10):")
 
-@dp.message(lambda message: message.chat.id in user_states and user_states[message.chat.id]["state"] == "waiting_interval")
-async def process_interval(message: types.Message):
-    """Обработка интервала проверки"""
-    chat_id = message.chat.id
-    
-    try:
-        interval = int(message.text)
-        if interval < 10:
-            raise ValueError
-    except ValueError:
-        await message.answer("Пожалуйста, введите число не менее 10 минут.")
+    if not tasks:
+        await message.answer("У вас пока нет задач. Создайте первую командой /add.")
         return
-    
-    # Сохраняем задачу в базу данных
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.chat_id == chat_id))
-        user_id = result.scalar_one().id
-        task = Task(
-            app_user_id=user_id,
-            task_name=user_states[chat_id]["task_name"],
-            url=user_states[chat_id]["url"],
-            end_date=datetime.now() + timedelta(days=user_states[chat_id]["days"]),
-            interval=interval,
-            is_active=True,
-            next_run_at=datetime.now() - timedelta(minutes=2)
-        )
-        session.add(task)
-        await session.commit()
-        logger.info(f"Создана новая задача для чата {chat_id}")
-    
-    await message.answer(
-        "Задача успешно добавлена!\n"
-        f"📝 Название: {user_states[chat_id]['task_name']}\n"
-        f"🔗 Ссылка: {user_states[chat_id]['url']}\n"
-        f"📅 Дата окончания отслеживания: {datetime.now() + timedelta(days=user_states[chat_id]['days'])}\n"
-        f"⏱ Проверка осуществляется каждые {interval} минут\n"
-        "В ближайшее время вы получите ссылки на последние объявления."
+
+    await message.answer("Ваши задачи:")
+    for task in tasks:
+        await message.answer(format_task(task), reply_markup=task_keyboard(task))
+
+
+@dp.callback_query(F.data.startswith("add_platform:"))
+async def process_add_platform(callback: types.CallbackQuery) -> None:
+    platform = callback.data.split(":", 1)[1]
+    state = user_states.setdefault(callback.message.chat.id, {})
+    if state.get("flow") != "add":
+        await callback.answer("Сценарий добавления уже не активен.", show_alert=True)
+        return
+
+    state["platform"] = platform
+    state["step"] = "url"
+    await callback.message.answer(f"Платформа: {platform}. Теперь отправьте ссылку на поиск.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_listings:"))
+async def process_task_listings(callback: types.CallbackQuery) -> None:
+    task_id = callback.data.split(":", 1)[1]
+    try:
+        token = await get_access_token_for_callback(callback)
+        listings = await api_core.list_task_listings(token, task_id, limit=10)
+    except ApiCoreError as error:
+        await callback.message.answer(f"Не удалось получить объявления: {error.message}")
+        await callback.answer()
+        return
+
+    if not listings:
+        await callback.message.answer("Для этой задачи пока нет найденных объявлений.")
+    else:
+        await callback.message.answer(format_listings(listings))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_refresh:"))
+async def process_task_refresh(callback: types.CallbackQuery) -> None:
+    task_id = callback.data.split(":", 1)[1]
+    try:
+        token = await get_access_token_for_callback(callback)
+        await api_core.refresh_task(token, task_id)
+    except ApiCoreError as error:
+        await callback.message.answer(f"Не удалось запросить обновление: {error.message}")
+    else:
+        await callback.message.answer("Запросил обновление задачи. ParserService подхватит её на ближайшем цикле.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_edit_name:"))
+async def process_task_edit_name(callback: types.CallbackQuery) -> None:
+    await start_edit_flow(callback, "name", "Введите новое название задачи.")
+
+
+@dp.callback_query(F.data.startswith("task_edit_url:"))
+async def process_task_edit_url(callback: types.CallbackQuery) -> None:
+    await start_edit_flow(callback, "url", "Отправьте новую ссылку. Она должна соответствовать платформе задачи.")
+
+
+@dp.callback_query(F.data.startswith("task_edit_interval:"))
+async def process_task_edit_interval(callback: types.CallbackQuery) -> None:
+    await start_edit_flow(
+        callback,
+        "interval",
+        f"Введите новый интервал в минутах, минимум {settings.min_interval_minutes}.",
     )
-    
-    # Очищаем состояние пользователя
-    del user_states[chat_id]
 
-async def set_commands(bot: Bot):
-    """Установка команд бота"""
-    commands = [
-        BotCommand(
-            command="start",
-            description="Начать работу с ботом"
-        ),
-        BotCommand(
-            command="help",
-            description="Показать справку"
-        ),
-        BotCommand(
-            command="add",
-            description="Добавить новую задачу для отслеживания"
-        ),
-        BotCommand(
-            command="list",
-            description="Показать список отслеживаемых задач"
-        ),
-        BotCommand(
-            command="remove",
-            description="Удалить задачу из отслеживания"
-        )
-    ]
-    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
-async def main():
-    """Основная функция запуска бота"""
+async def start_edit_flow(callback: types.CallbackQuery, field: str, prompt: str) -> None:
+    task_id = callback.data.split(":", 1)[1]
+    user_states[callback.message.chat.id] = {"flow": "edit", "field": field, "task_id": task_id}
+    await callback.message.answer(prompt)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_pause:"))
+async def process_task_pause(callback: types.CallbackQuery) -> None:
+    await update_task_active(callback, is_active=False)
+
+
+@dp.callback_query(F.data.startswith("task_resume:"))
+async def process_task_resume(callback: types.CallbackQuery) -> None:
+    await update_task_active(callback, is_active=True)
+
+
+async def update_task_active(callback: types.CallbackQuery, *, is_active: bool) -> None:
+    task_id = callback.data.split(":", 1)[1]
     try:
-        logger.info("Запуск бота...")
-        # Устанавливаем команды бота
+        token = await get_access_token_for_callback(callback)
+        task = await api_core.update_task(token, task_id, {"is_active": is_active})
+    except ApiCoreError as error:
+        await callback.message.answer(f"Не удалось обновить задачу: {error.message}")
+    else:
+        await callback.message.answer(format_task(task), reply_markup=task_keyboard(task))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_delete:"))
+async def process_task_delete(callback: types.CallbackQuery) -> None:
+    task_id = callback.data.split(":", 1)[1]
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да, удалить", callback_data=f"task_delete_confirm:{task_id}"),
+                InlineKeyboardButton(text="Отмена", callback_data="noop"),
+            ]
+        ]
+    )
+    await callback.message.answer("Удалить задачу? Это остановит парсинг, но история объявлений сохранится.", reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("task_delete_confirm:"))
+async def process_task_delete_confirm(callback: types.CallbackQuery) -> None:
+    task_id = callback.data.split(":", 1)[1]
+    try:
+        token = await get_access_token_for_callback(callback)
+        await api_core.delete_task(token, task_id)
+    except ApiCoreError as error:
+        await callback.message.answer(f"Не удалось удалить задачу: {error.message}")
+    else:
+        await callback.message.answer("Задача удалена.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "noop")
+async def process_noop(callback: types.CallbackQuery) -> None:
+    await callback.answer("Отменено")
+
+
+@dp.message(lambda message: message.chat.id in user_states)
+async def process_state_message(message: types.Message) -> None:
+    state = user_states.get(message.chat.id)
+    if not state:
+        return
+
+    if state.get("flow") == "add":
+        await process_add_state(message, state)
+    elif state.get("flow") == "edit":
+        await process_edit_state(message, state)
+
+
+async def process_add_state(message: types.Message, state: dict[str, Any]) -> None:
+    text = (message.text or "").strip()
+    if state.get("step") == "name":
+        if len(text) < 3 or len(text) > 150:
+            await message.answer("Название должно быть от 3 до 150 символов.")
+            return
+        state["name"] = text
+        state["step"] = "platform"
+        await message.answer("Выберите платформу:", reply_markup=platform_keyboard())
+        return
+
+    if state.get("step") == "url":
+        platform = state["platform"]
+        if not validate_platform_url(platform, text):
+            await message.answer("Ссылка не похожа на выбранную платформу. Отправьте корректную ссылку.")
+            return
+        state["url"] = text
+        state["step"] = "days"
+        await message.answer(f"Сколько дней отслеживать? Введите число от 1 до {settings.max_task_days}.")
+        return
+
+    if state.get("step") == "days":
+        try:
+            days = int(text)
+            if days < 1 or days > settings.max_task_days:
+                raise ValueError
+        except ValueError:
+            await message.answer(f"Введите число дней от 1 до {settings.max_task_days}.")
+            return
+        state["days"] = days
+        state["step"] = "interval"
+        await message.answer(f"Введите интервал проверки в минутах, минимум {settings.min_interval_minutes}.")
+        return
+
+    if state.get("step") == "interval":
+        try:
+            interval = int(text)
+            if interval < settings.min_interval_minutes:
+                raise ValueError
+        except ValueError:
+            await message.answer(f"Введите число не меньше {settings.min_interval_minutes}.")
+            return
+
+        end_date = datetime.now(timezone.utc) + timedelta(days=state["days"])
+        payload = {
+            "name": state["name"],
+            "platform": state["platform"],
+            "url": state["url"],
+            "interval_minutes": interval,
+            "end_date": end_date.isoformat(),
+            "is_active": True,
+        }
+        try:
+            token = await get_access_token_for_message(message)
+            task = await api_core.create_task(token, payload)
+        except ApiCoreError as error:
+            await send_api_error(message, error)
+            return
+        finally:
+            user_states.pop(message.chat.id, None)
+
+        await message.answer("Задача создана:\n\n" + format_task(task), reply_markup=task_keyboard(task))
+
+
+async def process_edit_state(message: types.Message, state: dict[str, Any]) -> None:
+    text = (message.text or "").strip()
+    task_id = state["task_id"]
+    field = state["field"]
+
+    payload: dict[str, Any]
+    if field == "name":
+        if len(text) < 3 or len(text) > 150:
+            await message.answer("Название должно быть от 3 до 150 символов.")
+            return
+        payload = {"name": text}
+    elif field == "interval":
+        try:
+            interval = int(text)
+            if interval < settings.min_interval_minutes:
+                raise ValueError
+        except ValueError:
+            await message.answer(f"Введите число не меньше {settings.min_interval_minutes}.")
+            return
+        payload = {"interval_minutes": interval}
+    elif field == "url":
+        if not text.startswith("http"):
+            await message.answer("Отправьте корректную ссылку.")
+            return
+        payload = {"url": text}
+    else:
+        user_states.pop(message.chat.id, None)
+        await message.answer("Неизвестное поле редактирования.")
+        return
+
+    try:
+        token = await get_access_token_for_message(message)
+        task = await api_core.update_task(token, task_id, payload)
+    except ApiCoreError as error:
+        await send_api_error(message, error)
+        return
+    finally:
+        user_states.pop(message.chat.id, None)
+
+    await message.answer("Задача обновлена:\n\n" + format_task(task), reply_markup=task_keyboard(task))
+
+
+def format_listings(listings: list[dict]) -> str:
+    chunks = ["Последние найденные объявления:"]
+    for index, listing in enumerate(listings, start=1):
+        chunks.append(f"{index}. {format_listing(listing)}")
+    return "\n\n".join(chunks)
+
+
+async def set_commands(current_bot: Bot) -> None:
+    commands = [
+        BotCommand(command="start", description="Начать работу и включить Telegram-уведомления"),
+        BotCommand(command="add", description="Добавить задачу парсинга"),
+        BotCommand(command="tasks", description="Показать задачи"),
+        BotCommand(command="listings", description="Показать найденные объявления"),
+        BotCommand(command="login", description="Получить ссылку для входа на сайт"),
+        BotCommand(command="help", description="Справка"),
+        BotCommand(command="cancel", description="Отменить текущий ввод"),
+    ]
+    await current_bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+
+
+async def main() -> None:
+    await api_core.connect()
+    try:
+        try:
+            await notifications.connect()
+        except Exception:
+            logger.exception("RabbitMQ is unavailable. Telegram channel events will retry on demand.")
         await set_commands(bot)
-        logger.info("Команды бота установлены")
         await dp.start_polling(bot)
-    except Exception as e:
-        logger.error(f"Ошибка при запуске бота: {str(e)}")
-        raise
+    finally:
+        await api_core.close()
+        await notifications.close()
+
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {str(e)}")
-        raise
+    asyncio.run(main())

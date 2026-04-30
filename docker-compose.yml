@@ -57,17 +57,21 @@ services:
       POSTGRES_DB: parser_db
     volumes:
       - parser_db:/var/lib/postgresql/data
+      
   bot_handle_service:
     build: ./BotService/
+    restart: unless-stopped
     environment:
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: parser_db
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      API_CORE_BASE_URL: http://api_core_service:8000
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-dev-service-token}
+      SITE_LOGIN_URL: ${SITE_LOGIN_URL:-http://localhost:3000/login?token={token}}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      NOTIFICATION_EXCHANGE: notification.events
+      NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
     depends_on:
       - api_core_service
+      - rabbitmq
 
 volumes:
   parser_db:
