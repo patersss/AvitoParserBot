@@ -60,7 +60,7 @@ CREATE TABLE login_tokens (
     expires_at         TIMESTAMPTZ NOT NULL,
     used_at            TIMESTAMPTZ,
 
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 

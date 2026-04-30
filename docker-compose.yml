@@ -1,26 +1,62 @@
 version: '3.8'
 
 services:
-  db:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  api_core_service:
+    build: ./ApiCoreService/
+    restart: unless-stopped
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: api_core_service_db
+      DB_PORT: 5432
+      DB_NAME: api_core_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-dev-service-token}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - api_core_service_db
+      - rabbitmq
+  
+  api_core_service_db:
     image: postgres:15
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: avito_parser
+      POSTGRES_DB: api_core_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - api_core_db:/var/lib/postgresql/data
 
   parser_service:
     build: ./parserService/
+    restart: unless-stopped
     environment:
       DB_USER: postgres
       DB_PASSWORD: postgres
-      DB_HOST: db
+      DB_HOST: parsing_service_db
       DB_PORT: 5432
-      DB_NAME: avito_parser
+      DB_NAME: parser_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
     depends_on:
-      - db
+      - parsing_service_db
+      - rabbitmq
+
+  parsing_service_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: parser_db
+    volumes:
+      - parser_db:/var/lib/postgresql/data
   bot_handle_service:
     build: ./BotService/
     environment:
@@ -28,10 +64,11 @@ services:
       DB_PASSWORD: postgres
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: avito_parser
+      DB_NAME: parser_db
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
     depends_on:
-      - parser_service
+      - api_core_service
 
 volumes:
-  postgres_data: 
+  parser_db:
+  api_core_db:
