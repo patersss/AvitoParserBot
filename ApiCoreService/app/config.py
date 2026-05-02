@@ -33,6 +33,16 @@ class Settings:
     email_code_ttl_minutes: int = int(os.getenv("EMAIL_CODE_TTL_MINUTES", "15"))
     expose_dev_email_code: bool = os.getenv("EXPOSE_DEV_EMAIL_CODE", "true").lower() == "true"
 
+    email_from: str = os.getenv("EMAIL_FROM", "no-reply@example.com")
+    email_from_name: str = os.getenv("EMAIL_FROM_NAME", "Parser Monitor")
+    smtp_host: str | None = os.getenv("SMTP_HOST") or None
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str | None = os.getenv("SMTP_USERNAME") or None
+    smtp_password: str | None = os.getenv("SMTP_PASSWORD") or None
+    smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+    smtp_starttls: bool = os.getenv("SMTP_STARTTLS", "true").lower() == "true"
+    smtp_timeout_seconds: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
+
     @property
     def database_url(self) -> str:
         return (
