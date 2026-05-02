@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   rabbitmq:
     image: rabbitmq:3-management
@@ -27,6 +25,7 @@ services:
   
   api_core_service_db:
     image: postgres:15
+    container_name: api_core_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -35,7 +34,7 @@ services:
       - api_core_db:/var/lib/postgresql/data
 
   parser_service:
-    build: ./parserService/
+    build: ./ParserService/
     restart: unless-stopped
     environment:
       DB_USER: postgres
@@ -48,15 +47,48 @@ services:
     depends_on:
       - parsing_service_db
       - rabbitmq
+      - api_core_service
+      - notification_service
 
   parsing_service_db:
     image: postgres:15
+    container_name: parsing_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: parser_db
     volumes:
       - parser_db:/var/lib/postgresql/data
+
+  notification_service:
+    build: ./NotificationService/
+    restart: unless-stopped
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: notification_service_db
+      DB_PORT: 5432
+      DB_NAME: notification_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      NOTIFICATION_EXCHANGE: notification.events
+      NOTIFICATION_EVENTS_QUEUE: notification.events
+      LISTING_FOUND_ROUTING_KEY: listing.found
+      NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
+      NOTIFICATION_CHANNEL_DELETED_ROUTING_KEY: notification.channel.deleted
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+    depends_on:
+      - notification_service_db
+      - rabbitmq
+
+  notification_service_db:
+    image: postgres:15
+    container_name: notification_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: notification_db
+    volumes:
+      - notification_db:/var/lib/postgresql/data
       
   bot_handle_service:
     build: ./BotService/
@@ -71,8 +103,10 @@ services:
       NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
     depends_on:
       - api_core_service
+      - notification_service
       - rabbitmq
 
 volumes:
   parser_db:
   api_core_db:
+  notification_db:

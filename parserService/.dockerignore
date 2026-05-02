@@ -1,6 +1,7 @@
 .gitignore
 __pycache__
 venv/
+.venv/
 .idea/
 .dockerignore
 plans.txt
