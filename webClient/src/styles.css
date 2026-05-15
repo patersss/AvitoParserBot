@@ -448,6 +448,67 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+/* Account page */
+
+.accountPage {
+  max-width: 560px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+  align-items: start;
+}
+
+.profileCard {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.profileAvatar {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #1f2937;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.profileInfo {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.profileNameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.profileName {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.profileEditForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.profileEditForm input {
+  flex: 1;
+  min-width: 120px;
+  max-width: 260px;
+}
+
 .channelList {
   display: grid;
   gap: 10px;
@@ -644,6 +705,10 @@ tr:last-child td {
   .pageGrid,
   .settingsGrid {
     grid-template-columns: 1fr;
+  }
+
+  .accountPage {
+    max-width: 100%;
   }
 }
 

@@ -67,8 +67,7 @@ function App() {
         .then((auth) => {
           applyAuth(auth.access_token, auth.user);
           window.history.replaceState({}, "", window.location.pathname);
-          setNotice(auth.user.login_email ? "Вход через Telegram выполнен" : "Осталось привязать email и пароль");
-          setPage(auth.user.login_email ? "tasks" : "account");
+          if (auth.user.login_email) setNotice("Вход через Telegram выполнен");
         })
         .catch((error) => {
           clearToken();
@@ -89,7 +88,6 @@ function App() {
       .then((me) => {
         setToken(stored);
         setUser(me);
-        setPage(me.login_email ? "tasks" : "account");
       })
       .catch(() => {
         clearToken();
@@ -104,6 +102,10 @@ function App() {
 
   if (!token || !user) {
     return <AuthScreen onAuth={applyAuth} notice={notice} />;
+  }
+
+  if (!user.login_email) {
+    return <RegisterPage token={token} user={user} onUser={setUser} onLogout={logout} />;
   }
 
   const isAdmin = user.user_role === "admin" || user.user_role === "superadmin";
@@ -138,12 +140,6 @@ function App() {
 
       <main className="content">
         {notice && <Toast message={notice} onClose={() => setNotice(null)} />}
-        {!user.login_email && (
-          <div className="callout">
-            <UserRound size={18} />
-            <span>Для входа по email привяжите почту и задайте пароль в аккаунте.</span>
-          </div>
-        )}
 
         {page === "tasks" && <TasksPage token={token} onNotice={setNotice} />}
         {page === "listings" && <ListingsPage token={token} />}
@@ -151,6 +147,118 @@ function App() {
         {page === "account" && <AccountPage token={token} user={user} onUser={setUser} onNotice={setNotice} />}
         {page === "admin" && isAdmin && <AdminPage token={token} onNotice={setNotice} />}
       </main>
+    </div>
+  );
+}
+
+function RegisterPage({
+  token,
+  user,
+  onUser,
+  onLogout,
+}: {
+  token: string;
+  user: UserRead;
+  onUser: (user: UserRead) => void;
+  onLogout: () => void;
+}) {
+  const [email, setEmail] = React.useState("");
+  const [verification, setVerification] = React.useState<EmailStartResponse | null>(null);
+  const [code, setCode] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [confirm, setConfirm] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function requestCode(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      setVerification(await api.startLoginEmail(token, email));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function register(event: React.FormEvent) {
+    event.preventDefault();
+    if (password !== confirm) {
+      setError("Пароли не совпадают");
+      return;
+    }
+    if (!verification) return;
+    setError(null);
+    setLoading(true);
+    try {
+      onUser(await api.confirmLoginEmail(token, verification.verification_id, code, password));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="authLayout">
+      <section className="authPanel">
+        <div className="brand authBrand">
+          <span className="brandMark">P</span>
+          <div>
+            <strong>Parser Monitor</strong>
+            <span>завершите регистрацию</span>
+          </div>
+        </div>
+
+        {!verification ? (
+          <form className="form" onSubmit={requestCode}>
+            <p className="hint" style={{ margin: 0 }}>
+              {user.username ? `Привет, ${user.username}! Задайте` : "Задайте"} email и пароль для входа на сайт.
+            </p>
+            <label>
+              Email
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            </label>
+            {error && <p className="errorText">{error}</p>}
+            <button className="primaryButton" disabled={loading}>
+              {loading ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+              Получить код
+            </button>
+            <button type="button" className="ghostButton" onClick={onLogout}>
+              <LogOut size={16} />
+              Выйти
+            </button>
+          </form>
+        ) : (
+          <form className="form" onSubmit={register}>
+            <p className="hint" style={{ margin: 0 }}>Код подтверждения отправлен на {email}</p>
+            <label>
+              Код из письма
+              <input value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
+            </label>
+            {verification.dev_code && <p className="devCode">dev-код: {verification.dev_code}</p>}
+            <label>
+              Пароль
+              <input type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </label>
+            <label>
+              Повторите пароль
+              <input type="password" minLength={8} value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+            </label>
+            {error && <p className="errorText">{error}</p>}
+            <button className="primaryButton" disabled={loading}>
+              {loading ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+              Зарегистрироваться
+            </button>
+            <button type="button" className="ghostButton" onClick={() => { setVerification(null); setCode(""); setPassword(""); setConfirm(""); setError(null); }}>
+              <X size={16} />
+              Назад
+            </button>
+          </form>
+        )}
+      </section>
     </div>
   );
 }
@@ -602,14 +710,20 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
 
 function AccountPage({ token, user, onUser, onNotice }: { token: string; user: UserRead; onUser: (user: UserRead) => void; onNotice: (value: string) => void }) {
   const [username, setUsername] = React.useState(user.username || "");
+  const [profileEditing, setProfileEditing] = React.useState(false);
+  const [profileError, setProfileError] = React.useState<string | null>(null);
+
   const [loginEmail, setLoginEmail] = React.useState(user.login_email || "");
   const [emailVerification, setEmailVerification] = React.useState<EmailStartResponse | null>(null);
   const [emailStep, setEmailStep] = React.useState<"code" | "password">("code");
   const [emailCode, setEmailCode] = React.useState("");
   const [firstPassword, setFirstPassword] = React.useState("");
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+
   const [currentPassword, setCurrentPassword] = React.useState("");
   const [newPassword, setNewPassword] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [passwordError, setPasswordError] = React.useState<string | null>(null);
+
   const [taskCount, setTaskCount] = React.useState<number | null>(null);
   const [listingCount, setListingCount] = React.useState<number | null>(null);
 
@@ -620,31 +734,38 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
 
   async function saveProfile(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
+    setProfileError(null);
     try {
       onUser(await api.updateMe(token, { username: username || null }));
-      onNotice("Профиль обновлен");
+      setProfileEditing(false);
+      onNotice("Имя обновлено");
     } catch (err) {
-      setError(errorMessage(err));
+      setProfileError(errorMessage(err));
     }
+  }
+
+  function cancelProfileEdit() {
+    setUsername(user.username || "");
+    setProfileEditing(false);
+    setProfileError(null);
   }
 
   async function startEmail(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
+    setEmailError(null);
     try {
       setEmailStep("code");
       setEmailCode("");
       setFirstPassword("");
       setEmailVerification(await api.startLoginEmail(token, loginEmail));
     } catch (err) {
-      setError(errorMessage(err));
+      setEmailError(errorMessage(err));
     }
   }
 
   async function handleCodeNext(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
+    setEmailError(null);
     if (!user.login_email) {
       setEmailStep("password");
     } else {
@@ -655,7 +776,7 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
   async function confirmEmail(event: React.FormEvent) {
     event.preventDefault();
     if (!emailVerification) return;
-    setError(null);
+    setEmailError(null);
     try {
       const nextUser = await api.confirmLoginEmail(
         token,
@@ -668,75 +789,136 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
       setEmailCode("");
       setFirstPassword("");
       setEmailStep("code");
-      onNotice("Email подтвержден");
+      onNotice("Email подтверждён");
     } catch (err) {
-      setError(errorMessage(err));
+      setEmailError(errorMessage(err));
     }
   }
 
   async function changePassword(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
+    setPasswordError(null);
     try {
       await api.changePassword(token, currentPassword, newPassword);
       setCurrentPassword("");
       setNewPassword("");
-      onNotice("Пароль изменен");
+      onNotice("Пароль изменён");
     } catch (err) {
-      setError(errorMessage(err));
+      setPasswordError(errorMessage(err));
     }
   }
 
+  const initials = (user.username?.[0] || user.login_email?.[0] || "?").toUpperCase();
+
   return (
-    <section className="settingsGrid">
-      <div>
-        <PageHeader title="Аккаунт" action={<UserRound size={20} />} />
-        <div className="summary">
-          <div><span>Задач</span><strong>{taskCount ?? "—"}</strong></div>
-          <div><span>Объявлений найдено</span><strong>{listingCount ?? "—"}</strong></div>
-          <div><span>Роль</span><strong>{user.user_role}</strong></div>
-          <div><span>Зарегистрирован</span><strong>{formatDate(user.created_at)}</strong></div>
+    <div className="accountPage">
+
+      {/* Profile */}
+      <div className="profileCard panel">
+        <div className="profileAvatar">{initials}</div>
+        <div className="profileInfo">
+          {profileEditing ? (
+            <form className="profileEditForm" onSubmit={saveProfile}>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Имя пользователя"
+                autoFocus
+              />
+              <button className="iconButton" type="submit" title="Сохранить" aria-label="Сохранить">
+                <Check size={16} />
+              </button>
+              <button className="iconButton" type="button" title="Отмена" aria-label="Отмена" onClick={cancelProfileEdit}>
+                <X size={16} />
+              </button>
+              {profileError && <span className="errorText">{profileError}</span>}
+            </form>
+          ) : (
+            <div className="profileNameRow">
+              <span className="profileName">{user.username || "Без имени"}</span>
+              <button
+                className="iconButton"
+                type="button"
+                title="Редактировать имя"
+                aria-label="Редактировать имя"
+                onClick={() => setProfileEditing(true)}
+              >
+                <Edit3 size={15} />
+              </button>
+            </div>
+          )}
+          <span className="muted">{user.login_email || "email не задан"}</span>
         </div>
       </div>
 
-      <form className="panel form" onSubmit={saveProfile}>
-        <h2>Профиль</h2>
-        <label>Имя<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <button className="primaryButton"><Save size={16} />Сохранить</button>
-      </form>
+      {/* Stats */}
+      <div className="summary">
+        <div><span>Задач создано</span><strong>{taskCount ?? "—"}</strong></div>
+        <div><span>Объявлений найдено</span><strong>{listingCount ?? "—"}</strong></div>
+        <div><span>Роль</span><strong>{user.user_role}</strong></div>
+        <div><span>Зарегистрирован</span><strong>{formatDate(user.created_at)}</strong></div>
+      </div>
 
+      {/* Email */}
       <div className="panel">
         <h2>Email для входа</h2>
         {!emailVerification ? (
           <form className="form" onSubmit={startEmail}>
-            <label>Email<input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></label>
+            <label>
+              Email
+              <input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} required />
+            </label>
+            {emailError && <p className="errorText">{emailError}</p>}
             <button className="primaryButton"><Check size={16} />Получить код</button>
           </form>
         ) : emailStep === "code" ? (
           <form className="form" onSubmit={handleCodeNext}>
-            <label>Код из письма<input value={emailCode} onChange={(event) => setEmailCode(event.target.value)} required /></label>
+            <label>
+              Код из письма
+              <input value={emailCode} onChange={(e) => setEmailCode(e.target.value)} required autoFocus />
+            </label>
             {emailVerification.dev_code && <p className="devCode">dev-код: {emailVerification.dev_code}</p>}
+            {emailError && <p className="errorText">{emailError}</p>}
             <button className="primaryButton"><Check size={16} />{user.login_email ? "Подтвердить" : "Далее"}</button>
+            <button type="button" className="ghostButton" onClick={() => { setEmailVerification(null); setEmailCode(""); setEmailError(null); }}>
+              <X size={16} />Отмена
+            </button>
           </form>
         ) : (
           <form className="form" onSubmit={confirmEmail}>
-            <label>Придумайте пароль<input type="password" minLength={8} value={firstPassword} onChange={(event) => setFirstPassword(event.target.value)} required /></label>
+            <label>
+              Придумайте пароль
+              <input type="password" minLength={8} value={firstPassword} onChange={(e) => setFirstPassword(e.target.value)} required autoFocus />
+            </label>
+            {emailError && <p className="errorText">{emailError}</p>}
             <button className="primaryButton"><Check size={16} />Подтвердить</button>
+            <button type="button" className="ghostButton" onClick={() => { setEmailStep("code"); setEmailError(null); }}>
+              <X size={16} />Назад
+            </button>
           </form>
         )}
       </div>
 
+      {/* Password */}
       {user.login_email && (
-        <form className="panel form" onSubmit={changePassword}>
-          <h2>Пароль</h2>
-          <label>Текущий пароль<input type="password" minLength={8} value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
-          <label>Новый пароль<input type="password" minLength={8} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label>
-          <button className="primaryButton"><Save size={16} />Изменить</button>
-        </form>
+        <div className="panel">
+          <h2>Изменить пароль</h2>
+          <form className="form" onSubmit={changePassword}>
+            <label>
+              Текущий пароль
+              <input type="password" minLength={8} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
+            </label>
+            <label>
+              Новый пароль
+              <input type="password" minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
+            </label>
+            {passwordError && <p className="errorText">{passwordError}</p>}
+            <button className="primaryButton"><Save size={16} />Изменить</button>
+          </form>
+        </div>
       )}
 
-      {error && <p className="errorText">{error}</p>}
-    </section>
+    </div>
   );
 }
 
