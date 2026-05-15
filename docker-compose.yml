@@ -18,15 +18,8 @@ services:
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-dev-service-token}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
       EXPOSE_DEV_EMAIL_CODE: ${EXPOSE_DEV_EMAIL_CODE:-true}
-      EMAIL_FROM: ${EMAIL_FROM:-no-reply@example.com}
-      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Parser Monitor}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
-      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
-      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
+      AUTH_EMAIL_VERIFICATION_ROUTING_KEY: auth.email.verification
+      AUTH_EMAIL_RESET_ROUTING_KEY: auth.email.password_reset
     ports:
       - "8000:8000"
     depends_on:
@@ -54,6 +47,7 @@ services:
       DB_NAME: parser_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      AVITO_COOKIES: ${AVITO_COOKIE_HEADER}
     depends_on:
       - parsing_service_db
       - rabbitmq
@@ -85,7 +79,18 @@ services:
       LISTING_FOUND_ROUTING_KEY: listing.found
       NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
       NOTIFICATION_CHANNEL_DELETED_ROUTING_KEY: notification.channel.deleted
+      AUTH_EMAIL_VERIFICATION_ROUTING_KEY: auth.email.verification
+      AUTH_EMAIL_RESET_ROUTING_KEY: auth.email.password_reset
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      EMAIL_FROM: ${EMAIL_FROM:-avitoparser.noreply@mail.ru}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Parser Monitor}
+      SMTP_HOST: ${SMTP_HOST:-smtp.mail.ru}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-avitoparser.noreply@mail.ru}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-true}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
     depends_on:
       - notification_service_db
       - rabbitmq

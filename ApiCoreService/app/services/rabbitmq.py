@@ -99,6 +99,25 @@ class RabbitMQClient:
         payload = build_task_deleted_payload(task_id)
         await self._publish_to_parser_queue(payload)
 
+    async def publish_verification_code(self, email: str, code: str, expires_in_minutes: int) -> None:
+        payload = {
+            "event_type": "auth.email.verification",
+            "source_service": "ApiCoreService",
+            "email": email,
+            "code": code,
+            "expires_in_minutes": expires_in_minutes,
+        }
+        await self._publish_to_notification_exchange(payload, routing_key=settings.auth_email_verification_routing_key)
+
+    async def publish_password_reset(self, email: str, reset_link: str) -> None:
+        payload = {
+            "event_type": "auth.email.password_reset",
+            "source_service": "ApiCoreService",
+            "email": email,
+            "reset_link": reset_link,
+        }
+        await self._publish_to_notification_exchange(payload, routing_key=settings.auth_email_reset_routing_key)
+
     async def _publish_to_parser_queue(self, payload: dict) -> None:
         if not self.channel:
             raise RuntimeError("RabbitMQ is not connected")
@@ -108,6 +127,16 @@ class RabbitMQClient:
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         )
         await self.channel.default_exchange.publish(message, routing_key=settings.parser_task_events_queue)
+
+    async def _publish_to_notification_exchange(self, payload: dict, *, routing_key: str) -> None:
+        if not self.notification_exchange:
+            raise RuntimeError("RabbitMQ is not connected")
+        message = aio_pika.Message(
+            body=json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
+            content_type="application/json",
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        )
+        await self.notification_exchange.publish(message, routing_key=routing_key)
 
     async def start_listing_consumer(self) -> None:
         if not self.channel or not self.notification_exchange:

@@ -560,9 +560,9 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
 
 function AccountPage({ token, user, onUser, onNotice }: { token: string; user: UserRead; onUser: (user: UserRead) => void; onNotice: (value: string) => void }) {
   const [username, setUsername] = React.useState(user.username || "");
-  const [avatarUrl, setAvatarUrl] = React.useState(user.avatar_url || "");
   const [loginEmail, setLoginEmail] = React.useState(user.login_email || "");
   const [emailVerification, setEmailVerification] = React.useState<EmailStartResponse | null>(null);
+  const [emailStep, setEmailStep] = React.useState<"code" | "password">("code");
   const [emailCode, setEmailCode] = React.useState("");
   const [firstPassword, setFirstPassword] = React.useState("");
   const [currentPassword, setCurrentPassword] = React.useState("");
@@ -573,7 +573,7 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
     event.preventDefault();
     setError(null);
     try {
-      onUser(await api.updateMe(token, { username: username || null, avatar_url: avatarUrl || null }));
+      onUser(await api.updateMe(token, { username: username || null }));
       onNotice("Профиль обновлен");
     } catch (err) {
       setError(errorMessage(err));
@@ -584,9 +584,22 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
     event.preventDefault();
     setError(null);
     try {
+      setEmailStep("code");
+      setEmailCode("");
+      setFirstPassword("");
       setEmailVerification(await api.startLoginEmail(token, loginEmail));
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function handleCodeNext(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (!user.login_email) {
+      setEmailStep("password");
+    } else {
+      await confirmEmail(event);
     }
   }
 
@@ -595,11 +608,17 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
     if (!emailVerification) return;
     setError(null);
     try {
-      const nextUser = await api.confirmLoginEmail(token, emailVerification.verification_id, emailCode, user.login_email ? undefined : firstPassword);
+      const nextUser = await api.confirmLoginEmail(
+        token,
+        emailVerification.verification_id,
+        emailCode,
+        user.login_email ? undefined : firstPassword,
+      );
       onUser(nextUser);
       setEmailVerification(null);
       setEmailCode("");
       setFirstPassword("");
+      setEmailStep("code");
       onNotice("Email подтвержден");
     } catch (err) {
       setError(errorMessage(err));
@@ -634,7 +653,6 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
       <form className="panel form" onSubmit={saveProfile}>
         <h2>Профиль</h2>
         <label>Имя<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <label>Аватар URL<input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} /></label>
         <button className="primaryButton"><Save size={16} />Сохранить</button>
       </form>
 
@@ -645,11 +663,15 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
             <label>Email<input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></label>
             <button className="primaryButton"><Check size={16} />Получить код</button>
           </form>
+        ) : emailStep === "code" ? (
+          <form className="form" onSubmit={handleCodeNext}>
+            <label>Код из письма<input value={emailCode} onChange={(event) => setEmailCode(event.target.value)} required /></label>
+            {emailVerification.dev_code && <p className="devCode">dev-код: {emailVerification.dev_code}</p>}
+            <button className="primaryButton"><Check size={16} />{user.login_email ? "Подтвердить" : "Далее"}</button>
+          </form>
         ) : (
           <form className="form" onSubmit={confirmEmail}>
-            <label>Код<input value={emailCode} onChange={(event) => setEmailCode(event.target.value)} required /></label>
-            {!user.login_email && <label>Пароль<input type="password" minLength={8} value={firstPassword} onChange={(event) => setFirstPassword(event.target.value)} required /></label>}
-            {emailVerification.dev_code && <p className="devCode">dev-код: {emailVerification.dev_code}</p>}
+            <label>Придумайте пароль<input type="password" minLength={8} value={firstPassword} onChange={(event) => setFirstPassword(event.target.value)} required /></label>
             <button className="primaryButton"><Check size={16} />Подтвердить</button>
           </form>
         )}

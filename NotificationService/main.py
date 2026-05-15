@@ -39,6 +39,12 @@ class NotificationService:
         if event_type in {"notification_channel.deleted", "notification.channel.deleted"}:
             await self._handle_channel_deleted(payload)
             return
+        if event_type == "auth.email.verification":
+            await self._handle_verification_code(payload)
+            return
+        if event_type == "auth.email.password_reset":
+            await self._handle_password_reset(payload)
+            return
         logger.info("Ignoring unsupported notification event type: %s", event_type)
 
     async def _handle_channel_upserted(self, payload: dict):
@@ -62,6 +68,21 @@ class NotificationService:
 
         await self.channels.disable_channel(user_id, channel_type)
         logger.info("Notification channel disabled: user_id=%s type=%s", user_id, channel_type)
+
+    async def _handle_verification_code(self, payload: dict):
+        email = payload.get("email")
+        code = payload.get("code")
+        expires_in = int(payload.get("expires_in_minutes", 10))
+        if not email or not code:
+            raise ValueError("auth.email.verification requires 'email' and 'code'")
+        await self.email.send_verification_code(email, str(code), expires_in)
+
+    async def _handle_password_reset(self, payload: dict):
+        email = payload.get("email")
+        reset_link = payload.get("reset_link")
+        if not email or not reset_link:
+            raise ValueError("auth.email.password_reset requires 'email' and 'reset_link'")
+        await self.email.send_password_reset(email, reset_link)
 
     async def _handle_listing_found(self, payload: dict):
         user_id = payload.get("user_id")

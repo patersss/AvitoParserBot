@@ -48,6 +48,8 @@ class RabbitMQClient:
         await queue.bind(self.exchange, routing_key=settings.listing_found_routing_key)
         await queue.bind(self.exchange, routing_key=settings.channel_upserted_routing_key)
         await queue.bind(self.exchange, routing_key=settings.channel_deleted_routing_key)
+        await queue.bind(self.exchange, routing_key=settings.auth_verification_routing_key)
+        await queue.bind(self.exchange, routing_key=settings.auth_password_reset_routing_key)
 
         async def on_message(message: AbstractIncomingMessage):
             try:
