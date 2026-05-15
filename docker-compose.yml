@@ -20,6 +20,8 @@ services:
       EXPOSE_DEV_EMAIL_CODE: ${EXPOSE_DEV_EMAIL_CODE:-true}
       AUTH_EMAIL_VERIFICATION_ROUTING_KEY: auth.email.verification
       AUTH_EMAIL_RESET_ROUTING_KEY: auth.email.password_reset
+      NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
+      NOTIFICATION_CHANNEL_DELETED_ROUTING_KEY: notification.channel.deleted
     ports:
       - "8000:8000"
     depends_on:

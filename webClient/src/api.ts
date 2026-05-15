@@ -167,6 +167,17 @@ export const api = {
     return request<MessageResponse>(`/notification-channels/${type}`, { method: "DELETE" }, token);
   },
 
+  updateNotificationChannelById(token: string, channelId: string, is_active: boolean) {
+    return request<NotificationChannelRead>(`/notification-channels/id/${channelId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_active }),
+    }, token);
+  },
+
+  deleteNotificationChannelById(token: string, channelId: string) {
+    return request<MessageResponse>(`/notification-channels/id/${channelId}`, { method: "DELETE" }, token);
+  },
+
   startNotificationEmail(token: string, email: string) {
     return request<EmailStartResponse>("/notification-channels/email/start", {
       method: "POST",

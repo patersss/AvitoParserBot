@@ -43,6 +43,18 @@ class RabbitMQClient:
         )
         await self.notification_exchange.publish(message, routing_key=settings.listing_found_routing_key)
 
+    async def publish_listings_batch(self, payload: dict):
+        """Publish all new listings from a single parse run as one batch event."""
+        if not self.notification_exchange:
+            raise RuntimeError("RabbitMQClient is not connected")
+
+        message = aio_pika.Message(
+            body=json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
+            content_type="application/json",
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        )
+        await self.notification_exchange.publish(message, routing_key=settings.listing_found_routing_key)
+
     async def consume_task_events(self, handler: Callable[[dict], Awaitable[None]]):
         if not self.channel:
             raise RuntimeError("RabbitMQClient is not connected")

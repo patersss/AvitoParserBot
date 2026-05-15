@@ -109,6 +109,34 @@ class RabbitMQClient:
         }
         await self._publish_to_notification_exchange(payload, routing_key=settings.auth_email_verification_routing_key)
 
+    async def publish_channel_upserted(self, channel, user_id) -> None:
+        payload = {
+            "event_type": "notification.channel.upserted",
+            "source_service": "ApiCoreService",
+            "user_id": str(user_id),
+            "channel": {
+                "id": str(channel.id),
+                "type": channel.type,
+                "config": channel.config,
+                "is_active": channel.is_active,
+            },
+        }
+        await self._publish_to_notification_exchange(
+            payload, routing_key=settings.notification_channel_upserted_routing_key
+        )
+
+    async def publish_channel_deleted(self, channel_id, user_id, channel_type: str) -> None:
+        payload = {
+            "event_type": "notification.channel.deleted",
+            "source_service": "ApiCoreService",
+            "user_id": str(user_id),
+            "channel_id": str(channel_id),
+            "type": channel_type,
+        }
+        await self._publish_to_notification_exchange(
+            payload, routing_key=settings.notification_channel_deleted_routing_key
+        )
+
     async def publish_password_reset(self, email: str, reset_link: str) -> None:
         payload = {
             "event_type": "auth.email.password_reset",
@@ -165,15 +193,28 @@ class RabbitMQClient:
         await message.ack()
 
     async def _save_listing(self, payload: dict) -> None:
-        values = listing_found_to_history_values(payload)
+        event_type = payload.get("event_type")
+        now = datetime.now(timezone.utc)
+
+        if event_type == "listings.batch_found":
+            rows = [
+                listing_found_to_history_values({**payload, "listing": listing}, now=now)
+                for listing in (payload.get("listings") or [])
+            ]
+        else:
+            rows = [listing_found_to_history_values(payload, now=now)]
+
+        if not rows:
+            return
 
         async with async_session() as session:
-            statement = (
-                insert(ListingHistory)
-                .values(**values)
-                .on_conflict_do_nothing(index_elements=["task_id", "platform", "external_id"])
-            )
-            await session.execute(statement)
+            for values in rows:
+                statement = (
+                    insert(ListingHistory)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=["task_id", "platform", "external_id"])
+                )
+                await session.execute(statement)
             await session.commit()
 
 

@@ -10,7 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    UniqueConstraint,  # kept for ListingHistory
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -119,7 +119,6 @@ class NotificationChannel(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        UniqueConstraint("user_id", "type", name="uix_notification_channel_user_type"),
         CheckConstraint("type IN ('telegram', 'email', 'vk')", name="ck_notification_channels_type"),
     )
 

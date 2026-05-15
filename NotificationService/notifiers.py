@@ -86,6 +86,29 @@ class EmailNotifier:
 
         await aiosmtplib.send(msg, **smtp_kwargs)
 
+    async def send_listings_batch(self, config: dict, event: dict) -> None:
+        email = config.get("email")
+        if not email:
+            raise ValueError("Email channel config requires 'email' field")
+
+        task_name = event.get("task_name") or "без названия"
+        listings = event.get("listings") or []
+        if not listings:
+            return
+
+        count = len(listings)
+        subject = f"Найдено {count} {_plural_ru(count, 'объявление', 'объявления', 'объявлений')}: {task_name}"
+        html_body = _listings_batch_html(task_name, listings)
+        text_body = f"Найдено {count} новых объявлений по задаче «{task_name}»\n\n"
+        for listing in listings:
+            title = listing.get("title") or "Новое объявление"
+            price = format_price(listing.get("price"))
+            url = listing.get("url") or ""
+            text_body += f"— {title}\n  Цена: {price}\n  {url}\n\n"
+
+        await self._send(email, subject, html_body, text_body)
+        logger.info("Email batch notification sent to %s (%d listings)", email, count)
+
     async def send_listing(self, config: dict, event: dict) -> None:
         email = config.get("email")
         if not email:
@@ -153,7 +176,7 @@ _BASE_STYLE = """
   .value { font-weight: 600; font-size: 15px; }
   .price { color: #16a34a; }
   .link-block { word-break: break-all; margin: 12px 0; }
-  .link-block a { color: #2563eb; }
+  .link-block a:not(.btn) { color: #2563eb; }
   .footer { padding: 16px 32px; background: #f9fafb; color: #9ca3af;
              font-size: 12px; text-align: center; }
 """
@@ -187,10 +210,29 @@ def _listing_html(title: str, price: str, platform: str, task_name: str, url: st
     if url:
         body += (
             f'<div class="link-block">'
-            f'<a class="btn" href="{html.escape(url)}">Открыть объявление</a>'
+            f'<a class="btn" href="{html.escape(url)}">Просмотреть</a>'
             f"</div>"
         )
     return _html_doc("Новое объявление", body)
+
+
+def _listings_batch_html(task_name: str, listings: list[dict]) -> str:
+    count = len(listings)
+    body = f"<p>Найдено <strong>{count}</strong> новых объявлений по задаче <strong>{html.escape(task_name)}</strong>.</p>"
+    for listing in listings:
+        title = listing.get("title") or "Новое объявление"
+        price = format_price(listing.get("price"))
+        url = listing.get("url") or ""
+        body += (
+            '<div style="border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;margin:12px 0;">'
+            f'<div class="field"><span class="value">{html.escape(title)}</span></div>'
+            f'<div class="field"><span class="label">Цена: </span>'
+            f'<span class="value price">{html.escape(price)}</span></div>'
+        )
+        if url:
+            body += f'<div class="link-block"><a class="btn" href="{html.escape(url, quote=True)}">Просмотреть</a></div>'
+        body += "</div>"
+    return _html_doc(f"Найдено {count} объявлений", body)
 
 
 def _verification_html(code: str, expires_in_minutes: int) -> str:
@@ -245,6 +287,19 @@ def format_listing_message(event: dict) -> str:
         f"Задача: {task_name}\n"
         f"{url}"
     )
+
+
+def _plural_ru(n: int, form1: str, form2: str, form5: str) -> str:
+    """Return Russian plural form: 1 объявление, 2 объявления, 5 объявлений."""
+    n = abs(n) % 100
+    if 11 <= n <= 19:
+        return form5
+    n = n % 10
+    if n == 1:
+        return form1
+    if 2 <= n <= 4:
+        return form2
+    return form5
 
 
 def format_price(value) -> str:

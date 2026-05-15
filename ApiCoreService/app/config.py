@@ -35,6 +35,8 @@ class Settings:
 
     auth_email_verification_routing_key: str = os.getenv("AUTH_EMAIL_VERIFICATION_ROUTING_KEY", "auth.email.verification")
     auth_email_reset_routing_key: str = os.getenv("AUTH_EMAIL_RESET_ROUTING_KEY", "auth.email.password_reset")
+    notification_channel_upserted_routing_key: str = os.getenv("NOTIFICATION_CHANNEL_ROUTING_KEY", "notification.channel.upserted")
+    notification_channel_deleted_routing_key: str = os.getenv("NOTIFICATION_CHANNEL_DELETED_ROUTING_KEY", "notification.channel.deleted")
 
     @property
     def database_url(self) -> str:

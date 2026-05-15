@@ -37,6 +37,7 @@ class Settings:
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     )
     scheduler_batch_size: int = int(os.getenv("SCHEDULER_BATCH_SIZE", "20"))
+    first_run_notify_limit: int = int(os.getenv("FIRST_RUN_NOTIFY_LIMIT", "5"))
     parser_debug_html: bool = os.getenv("PARSER_DEBUG_HTML", "false").lower() == "true"
     parser_debug_dir: str = os.getenv("PARSER_DEBUG_DIR", "debug_html")
 

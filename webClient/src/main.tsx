@@ -493,7 +493,7 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
       setVerification(null);
       setCode("");
       setEmail("");
-      onNotice("Email-канал подключен");
+      onNotice("Email-канал добавлен");
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -501,59 +501,101 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
   }
 
   async function toggle(channel: NotificationChannelRead) {
-    await api.updateNotificationChannel(token, channel.type, !channel.is_active);
-    await load();
+    try {
+      if (channel.type === "telegram") {
+        await api.updateNotificationChannel(token, channel.type, !channel.is_active);
+      } else {
+        await api.updateNotificationChannelById(token, channel.id, !channel.is_active);
+      }
+      await load();
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
   }
 
   async function remove(channel: NotificationChannelRead) {
-    await api.deleteNotificationChannel(token, channel.type);
-    await load();
+    try {
+      if (channel.type === "telegram") {
+        await api.deleteNotificationChannel(token, channel.type);
+      } else {
+        await api.deleteNotificationChannelById(token, channel.id);
+      }
+      onNotice("Канал удалён");
+      await load();
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
   }
 
   return (
-    <section className="pageGrid">
-      <div className="mainColumn">
+    <section className="settingsGrid">
+      <div>
         <PageHeader title="Уведомления" action={<Bell size={20} />} />
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr><th>Канал</th><th>Адрес</th><th>Статус</th><th></th></tr>
-            </thead>
-            <tbody>
-              {channels.map((channel) => (
-                <tr key={channel.id}>
-                  <td>{channel.type}</td>
-                  <td>{String(channel.config.email || channel.config.chat_id || "-")}</td>
-                  <td><StatusBadge active={channel.is_active} /></td>
-                  <td className="actions">
-                    <IconButton title={channel.is_active ? "Отключить" : "Включить"} onClick={() => toggle(channel)}>
-                      {channel.is_active ? <Pause size={16} /> : <Play size={16} />}
-                    </IconButton>
-                    <IconButton title="Удалить" danger onClick={() => remove(channel)}><Trash2 size={16} /></IconButton>
-                  </td>
-                </tr>
-              ))}
-              {!channels.length && <tr><td colSpan={4} className="empty">Каналы не настроены</td></tr>}
-            </tbody>
-          </table>
+        <div className="channelList">
+          {channels.length === 0 && <p className="empty">Каналы не настроены</p>}
+          {channels.map((channel) => {
+            const address =
+              channel.type === "email"
+                ? String(channel.config.email ?? "")
+                : channel.type === "telegram"
+                ? `chat ${channel.config.chat_id}`
+                : JSON.stringify(channel.config);
+            const label = channel.type === "email" ? "Email" : channel.type === "telegram" ? "Telegram" : channel.type;
+            return (
+              <div className="channelCard" key={channel.id}>
+                <div className="channelCardIcon">{channel.type === "telegram" ? "TG" : "@"}</div>
+                <div className="channelCardInfo">
+                  <span className="channelType">{label}</span>
+                  <span className="channelAddress">{address}</span>
+                </div>
+                <StatusBadge active={channel.is_active} />
+                <div className="channelCardActions">
+                  <IconButton title={channel.is_active ? "Отключить" : "Включить"} onClick={() => toggle(channel)}>
+                    {channel.is_active ? <Pause size={16} /> : <Play size={16} />}
+                  </IconButton>
+                  <IconButton title="Удалить" danger onClick={() => remove(channel)}>
+                    <Trash2 size={16} />
+                  </IconButton>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-      <aside className="sidePanel">
-        <h2>Email</h2>
+
+      <div className="panel">
+        <h2>Добавить email</h2>
         {!verification ? (
           <form className="form" onSubmit={startEmail}>
-            <label>Email для уведомлений<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-            <button className="primaryButton"><Check size={16} />Получить код</button>
+            <label>
+              Email для уведомлений
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+            </label>
+            <button className="primaryButton">
+              <Check size={16} />
+              Получить код
+            </button>
           </form>
         ) : (
           <form className="form" onSubmit={confirmEmail}>
-            <label>Код<input value={code} onChange={(event) => setCode(event.target.value)} required /></label>
+            <p className="hint" style={{ margin: 0 }}>Код отправлен на {email}</p>
+            <label>
+              Код подтверждения
+              <input value={code} onChange={(event) => setCode(event.target.value)} required autoFocus />
+            </label>
             {verification.dev_code && <p className="devCode">dev-код: {verification.dev_code}</p>}
             <button className="primaryButton"><Check size={16} />Подтвердить</button>
+            <button
+              type="button"
+              className="ghostButton"
+              onClick={() => { setVerification(null); setCode(""); }}
+            >
+              <X size={16} />Отмена
+            </button>
           </form>
         )}
         {error && <p className="errorText">{error}</p>}
-      </aside>
+      </div>
     </section>
   );
 }
@@ -568,6 +610,13 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
   const [currentPassword, setCurrentPassword] = React.useState("");
   const [newPassword, setNewPassword] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [taskCount, setTaskCount] = React.useState<number | null>(null);
+  const [listingCount, setListingCount] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    api.listTasks(token, true).then((tasks) => setTaskCount(tasks.length)).catch(() => undefined);
+    api.listListings(token).then((listings) => setListingCount(listings.length)).catch(() => undefined);
+  }, [token]);
 
   async function saveProfile(event: React.FormEvent) {
     event.preventDefault();
@@ -643,10 +692,10 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
       <div>
         <PageHeader title="Аккаунт" action={<UserRound size={20} />} />
         <div className="summary">
-          <div><span>ID</span><strong>{user.id}</strong></div>
+          <div><span>Задач</span><strong>{taskCount ?? "—"}</strong></div>
+          <div><span>Объявлений найдено</span><strong>{listingCount ?? "—"}</strong></div>
           <div><span>Роль</span><strong>{user.user_role}</strong></div>
-          <div><span>Статус</span><strong>{user.status}</strong></div>
-          <div><span>Создан</span><strong>{formatDate(user.created_at)}</strong></div>
+          <div><span>Зарегистрирован</span><strong>{formatDate(user.created_at)}</strong></div>
         </div>
       </div>
 
