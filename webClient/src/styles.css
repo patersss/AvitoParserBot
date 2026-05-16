@@ -270,9 +270,31 @@ select:focus {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) 120px minmax(240px, 2fr) 100px 190px auto;
   gap: 10px;
-  align-items: start;
+  align-items: center;
   margin-bottom: 18px;
 }
+
+.formActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.taskUrl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.tasksTable {
+  table-layout: fixed;
+}
+
+.tasksTable th:nth-child(2) { width: 96px; }
+.tasksTable th:nth-child(3) { width: 88px; }
+.tasksTable th:nth-child(4) { width: 88px; }
+.tasksTable th:last-child   { width: 160px; }
 
 .wideInput {
   min-width: 0;
@@ -446,6 +468,37 @@ tr:last-child td {
 
 .summary strong {
   overflow-wrap: anywhere;
+}
+
+/* Notifications page */
+
+.notifPage {
+  max-width: 640px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+  align-items: start;
+}
+
+.notifAddPanel {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: white;
+}
+
+.notifAddForm {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notifAddForm input {
+  flex: 1;
+  min-width: 180px;
 }
 
 /* Account page */

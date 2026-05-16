@@ -328,8 +328,6 @@ function AuthScreen({ onAuth, notice }: { onAuth: (token: string, user: UserRead
 
 function TasksPage({ token, onNotice }: { token: string; onNotice: (value: string) => void }) {
   const [tasks, setTasks] = React.useState<TaskRead[]>([]);
-  const [selectedTask, setSelectedTask] = React.useState<TaskRead | null>(null);
-  const [taskListings, setTaskListings] = React.useState<ListingRead[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [editing, setEditing] = React.useState<TaskRead | null>(null);
 
@@ -349,7 +347,6 @@ function TasksPage({ token, onNotice }: { token: string; onNotice: (value: strin
   async function remove(task: TaskRead) {
     await api.deleteTask(token, task.id);
     onNotice("Задача удалена");
-    setSelectedTask(null);
     await load();
   }
 
@@ -363,63 +360,63 @@ function TasksPage({ token, onNotice }: { token: string; onNotice: (value: strin
     await load();
   }
 
-  async function openListings(task: TaskRead) {
-    setSelectedTask(task);
-    setTaskListings(await api.listTaskListings(token, task.id));
+  function copyUrl(url: string) {
+    navigator.clipboard.writeText(url).then(
+      () => onNotice("URL скопирован"),
+      () => onNotice("Не удалось скопировать URL"),
+    );
   }
 
   return (
-    <section className="pageGrid">
-      <div className="mainColumn">
-        <PageHeader title="Задачи" action={<ReloadButton loading={loading} onClick={load} />} />
-        <TaskForm token={token} onCreated={load} onNotice={onNotice} />
+    <section>
+      <PageHeader title="Задачи" />
+      <TaskForm token={token} onCreated={load} onNotice={onNotice} loading={loading} onReload={load} />
 
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Название</th>
-                <th>Площадка</th>
-                <th>Интервал</th>
-                <th>Статус</th>
-                <th></th>
+      <div className="tableWrap">
+        <table className="tasksTable">
+          <thead>
+            <tr>
+              <th>Название / URL</th>
+              <th>Площадка</th>
+              <th>Интервал</th>
+              <th>Статус</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {tasks.map((task) => (
+              <tr key={task.id}>
+                <td>
+                  <strong>{task.name || "Без названия"}</strong>
+                  <span
+                    className="subtle taskUrl"
+                    title="Двойной клик — скопировать URL"
+                    onDoubleClick={() => copyUrl(task.url)}
+                  >
+                    {task.url}
+                  </span>
+                </td>
+                <td>{task.platform}</td>
+                <td>{task.interval_minutes} мин</td>
+                <td><StatusBadge active={task.is_active} /></td>
+                <td className="actions">
+                  <IconButton title="Редактировать" onClick={() => setEditing(task)}><Edit3 size={16} /></IconButton>
+                  <IconButton title={task.is_active ? "Пауза" : "Возобновить"} onClick={() => toggle(task)}>
+                    {task.is_active ? <Pause size={16} /> : <Play size={16} />}
+                  </IconButton>
+                  <IconButton title="Парсить сейчас" onClick={() => refresh(task)}><RefreshCw size={16} /></IconButton>
+                  <IconButton title="Удалить" danger onClick={() => remove(task)}><Trash2 size={16} /></IconButton>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id}>
-                  <td>
-                    <strong>{task.name || "Без названия"}</strong>
-                    <span className="subtle oneLine">{task.url}</span>
-                  </td>
-                  <td>{task.platform}</td>
-                  <td>{task.interval_minutes} мин</td>
-                  <td><StatusBadge active={task.is_active} /></td>
-                  <td className="actions">
-                    <IconButton title="Объявления" onClick={() => openListings(task)}><Eye size={16} /></IconButton>
-                    <IconButton title="Редактировать" onClick={() => setEditing(task)}><Edit3 size={16} /></IconButton>
-                    <IconButton title={task.is_active ? "Пауза" : "Возобновить"} onClick={() => toggle(task)}>
-                      {task.is_active ? <Pause size={16} /> : <Play size={16} />}
-                    </IconButton>
-                    <IconButton title="Обновить сейчас" onClick={() => refresh(task)}><RefreshCw size={16} /></IconButton>
-                    <IconButton title="Удалить" danger onClick={() => remove(task)}><Trash2 size={16} /></IconButton>
-                  </td>
-                </tr>
-              ))}
-              {!tasks.length && (
-                <tr>
-                  <td colSpan={5} className="empty">Задач пока нет</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {!tasks.length && (
+              <tr>
+                <td colSpan={5} className="empty">Задач пока нет</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
-
-      <aside className="sidePanel">
-        <h2>{selectedTask ? selectedTask.name || selectedTask.platform : "История задачи"}</h2>
-        <ListingList listings={taskListings} compact />
-      </aside>
 
       {editing && (
         <TaskEditModal
@@ -436,7 +433,19 @@ function TasksPage({ token, onNotice }: { token: string; onNotice: (value: strin
   );
 }
 
-function TaskForm({ token, onCreated, onNotice }: { token: string; onCreated: () => Promise<void>; onNotice: (value: string) => void }) {
+function TaskForm({
+  token,
+  onCreated,
+  onNotice,
+  loading,
+  onReload,
+}: {
+  token: string;
+  onCreated: () => Promise<void>;
+  onNotice: (value: string) => void;
+  loading: boolean;
+  onReload: () => void | Promise<void>;
+}) {
   const [form, setForm] = React.useState<TaskCreate>({
     name: "",
     platform: "avito",
@@ -471,10 +480,15 @@ function TaskForm({ token, onCreated, onNotice }: { token: string; onCreated: ()
       <input className="wideInput" placeholder="URL" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} required />
       <input type="number" min={1} value={form.interval_minutes} onChange={(event) => setForm({ ...form, interval_minutes: Number(event.target.value) })} />
       <input type="datetime-local" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-      <button className="primaryButton">
-        <Plus size={16} />
-        Создать
-      </button>
+      <div className="formActions">
+        <button className="primaryButton" type="submit">
+          <Plus size={16} />
+          Создать
+        </button>
+        <button className="iconButton" type="button" title="Обновить список" aria-label="Обновить список" onClick={() => void onReload()}>
+          <RefreshCw className={loading ? "spin" : ""} size={16} />
+        </button>
+      </div>
       {error && <span className="errorText formError">{error}</span>}
     </form>
   );
@@ -636,73 +650,72 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
   }
 
   return (
-    <section className="settingsGrid">
-      <div>
-        <PageHeader title="Уведомления" action={<Bell size={20} />} />
-        <div className="channelList">
-          {channels.length === 0 && <p className="empty">Каналы не настроены</p>}
-          {channels.map((channel) => {
-            const address =
-              channel.type === "email"
-                ? String(channel.config.email ?? "")
-                : channel.type === "telegram"
-                ? `chat ${channel.config.chat_id}`
-                : JSON.stringify(channel.config);
-            const label = channel.type === "email" ? "Email" : channel.type === "telegram" ? "Telegram" : channel.type;
-            return (
-              <div className="channelCard" key={channel.id}>
-                <div className="channelCardIcon">{channel.type === "telegram" ? "TG" : "@"}</div>
-                <div className="channelCardInfo">
-                  <span className="channelType">{label}</span>
-                  <span className="channelAddress">{address}</span>
-                </div>
-                <StatusBadge active={channel.is_active} />
-                <div className="channelCardActions">
-                  <IconButton title={channel.is_active ? "Отключить" : "Включить"} onClick={() => toggle(channel)}>
-                    {channel.is_active ? <Pause size={16} /> : <Play size={16} />}
-                  </IconButton>
-                  <IconButton title="Удалить" danger onClick={() => remove(channel)}>
-                    <Trash2 size={16} />
-                  </IconButton>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+    <section className="notifPage">
+      <PageHeader title="Уведомления" action={<Bell size={20} />} />
 
-      <div className="panel">
-        <h2>Добавить email</h2>
+      <div className="notifAddPanel">
         {!verification ? (
-          <form className="form" onSubmit={startEmail}>
-            <label>
-              Email для уведомлений
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </label>
-            <button className="primaryButton">
-              <Check size={16} />
-              Получить код
+          <form className="notifAddForm" onSubmit={startEmail}>
+            <input
+              type="email"
+              placeholder="Email для уведомлений"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+            <button className="primaryButton" type="submit">
+              <Plus size={16} />
+              Добавить email
             </button>
           </form>
         ) : (
-          <form className="form" onSubmit={confirmEmail}>
-            <p className="hint" style={{ margin: 0 }}>Код отправлен на {email}</p>
-            <label>
-              Код подтверждения
-              <input value={code} onChange={(event) => setCode(event.target.value)} required autoFocus />
-            </label>
-            {verification.dev_code && <p className="devCode">dev-код: {verification.dev_code}</p>}
-            <button className="primaryButton"><Check size={16} />Подтвердить</button>
-            <button
-              type="button"
-              className="ghostButton"
-              onClick={() => { setVerification(null); setCode(""); }}
-            >
+          <form className="notifAddForm" onSubmit={confirmEmail}>
+            <input
+              placeholder={`Код из письма (${email})`}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              required
+              autoFocus
+            />
+            {verification.dev_code && <span className="devCode" style={{ fontSize: 12 }}>dev: {verification.dev_code}</span>}
+            <button className="primaryButton" type="submit"><Check size={16} />Подтвердить</button>
+            <button type="button" className="ghostButton" onClick={() => { setVerification(null); setCode(""); }}>
               <X size={16} />Отмена
             </button>
           </form>
         )}
-        {error && <p className="errorText">{error}</p>}
+        {error && <p className="errorText" style={{ margin: 0 }}>{error}</p>}
+      </div>
+
+      <div className="channelList">
+        {channels.length === 0 && <p className="empty">Каналы не настроены</p>}
+        {channels.map((channel) => {
+          const address =
+            channel.type === "email"
+              ? String(channel.config.email ?? "")
+              : channel.type === "telegram"
+              ? `chat_id: ${channel.config.chat_id}`
+              : JSON.stringify(channel.config);
+          const label = channel.type === "email" ? "Email" : channel.type === "telegram" ? "Telegram" : channel.type;
+          return (
+            <div className="channelCard" key={channel.id}>
+              <div className="channelCardIcon">{channel.type === "telegram" ? "TG" : "@"}</div>
+              <div className="channelCardInfo">
+                <span className="channelType">{label}</span>
+                <span className="channelAddress">{address}</span>
+              </div>
+              <StatusBadge active={channel.is_active} />
+              <div className="channelCardActions">
+                <IconButton title={channel.is_active ? "Отключить" : "Включить"} onClick={() => toggle(channel)}>
+                  {channel.is_active ? <Pause size={16} /> : <Play size={16} />}
+                </IconButton>
+                <IconButton title="Удалить" danger onClick={() => remove(channel)}>
+                  <Trash2 size={16} />
+                </IconButton>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </section>
   );

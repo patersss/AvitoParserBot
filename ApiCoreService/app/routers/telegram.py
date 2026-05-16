@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.dependencies import verify_service_token
-from app.models import LoginToken, TelegramAccount, User
+from app.models import LoginToken, NotificationChannel, TelegramAccount, User
 from app.schemas import (
     TelegramLoginTokenRequest,
     TelegramLoginTokenResponse,
@@ -16,6 +17,9 @@ from app.schemas import (
     TelegramUserResponse,
 )
 from app.security import generate_url_token, hash_secret
+from app.services.rabbitmq import rabbitmq
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telegram", tags=["telegram"], dependencies=[Depends(verify_service_token)])
 
@@ -73,6 +77,33 @@ async def upsert_telegram_user(
     user.avatar_url = payload.avatar_url or user.avatar_url
     await db.commit()
     await db.refresh(user)
+
+    result = await db.execute(
+        select(NotificationChannel).where(
+            NotificationChannel.user_id == user.id,
+            NotificationChannel.type == "telegram",
+        )
+    )
+    telegram_channel = result.scalars().first()
+    if telegram_channel:
+        telegram_channel.config = {"chat_id": telegram_account.chat_id}
+        telegram_channel.is_active = True
+    else:
+        telegram_channel = NotificationChannel(
+            user_id=user.id,
+            type="telegram",
+            config={"chat_id": telegram_account.chat_id},
+            is_active=True,
+        )
+        db.add(telegram_channel)
+    await db.commit()
+    await db.refresh(telegram_channel)
+
+    try:
+        await rabbitmq.publish_channel_upserted(telegram_channel, user.id)
+    except Exception:
+        logger.exception("Failed to publish telegram channel.upserted for user %s", user.id)
+
     return TelegramUserResponse(user=user, telegram_user_id=telegram_account.telegram_user_id, chat_id=telegram_account.chat_id)
 
 
