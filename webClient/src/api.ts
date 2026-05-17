@@ -10,6 +10,7 @@ import type {
   TaskRead,
   TaskUpdate,
   UserRead,
+  UserRole,
   UserStatus,
 } from "./types";
 
@@ -198,6 +199,13 @@ export const api = {
 
   adminUserTasks(token: string, userId: string, includeDeleted = true) {
     return request<TaskRead[]>(`/admin/users/${userId}/tasks${query({ include_deleted: includeDeleted, limit: 100 })}`, {}, token);
+  },
+
+  adminUpdateUserRole(token: string, userId: string, role: Extract<UserRole, "user" | "admin">) {
+    return request<UserRead>(`/admin/users/${userId}/role`, {
+      method: "PATCH",
+      body: JSON.stringify({ user_role: role }),
+    }, token);
   },
 
   adminBanUser(token: string, userId: string, reason?: string) {

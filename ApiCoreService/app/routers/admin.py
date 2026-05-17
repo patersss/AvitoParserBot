@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_admin
 from app.models import ListingHistory, Task, User
-from app.schemas import AdminBanRequest, AdminTaskPatch, ListingRead, MessageResponse, TaskRead, UserRead, UserStatus
+from app.schemas import AdminBanRequest, AdminRolePatch, AdminTaskPatch, ListingRead, MessageResponse, TaskRead, UserRead, UserStatus
 from app.services.rabbitmq import rabbitmq
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -131,6 +131,34 @@ async def list_user_tasks(
         conditions.append(Task.deleted_at.is_(None))
     result = await db.execute(select(Task).where(*conditions).order_by(Task.created_at.desc()).limit(limit).offset(offset))
     return list(result.scalars().all())
+
+
+@router.patch(
+    "/users/{user_id}/role",
+    response_model=UserRead,
+    summary="Change user role",
+    description=(
+        "Superadmin-only endpoint that promotes a user to admin or demotes an admin back to user. "
+        "Cannot target another superadmin."
+    ),
+    response_description="Updated user profile.",
+)
+async def update_user_role(
+    user_id: UUID,
+    payload: AdminRolePatch,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    if admin.user_role != "superadmin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only superadmin can change user roles")
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ensure_can_manage_user(admin, user)
+    user.user_role = payload.user_role
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 @router.patch(

@@ -15,6 +15,8 @@ import {
   Shield,
   ShieldOff,
   Trash2,
+  UserMinus,
+  UserPlus,
   X,
 } from "lucide-react";
 
@@ -29,6 +31,7 @@ import type {
   TaskCreate,
   TaskRead,
   UserRead,
+  UserRole,
   UserStatus,
 } from "./types";
 import "./styles.css";
@@ -145,7 +148,7 @@ function App() {
         {page === "listings" && <ListingsPage token={token} />}
         {page === "notifications" && <NotificationsPage token={token} onNotice={setNotice} />}
         {page === "account" && <AccountPage token={token} user={user} onUser={setUser} onNotice={setNotice} />}
-        {page === "admin" && isAdmin && <AdminPage token={token} onNotice={setNotice} />}
+        {page === "admin" && isAdmin && <AdminPage token={token} userRole={user.user_role} onNotice={setNotice} />}
       </main>
     </div>
   );
@@ -941,14 +944,15 @@ const userStatusLabels: Record<UserStatus, string> = {
   deleted: "Удалённые",
 };
 
-function AdminPage({ token, onNotice }: { token: string; onNotice: (value: string) => void }) {
+function AdminPage({ token, userRole, onNotice }: { token: string; userRole: UserRole; onNotice: (value: string) => void }) {
   const [users, setUsers] = React.useState<UserRead[]>([]);
   const [statusFilter, setStatusFilter] = React.useState<UserStatus | "">("");
   const [selectedUser, setSelectedUser] = React.useState<UserRead | null>(null);
   const [tasks, setTasks] = React.useState<TaskRead[]>([]);
-  const [selectedTask, setSelectedTask] = React.useState<TaskRead | null>(null);
-  const [listings, setListings] = React.useState<ListingRead[]>([]);
+  const [taskListings, setTaskListings] = React.useState<Record<string, ListingRead[]>>({});
   const [loading, setLoading] = React.useState(false);
+
+  const isSuperadmin = userRole === "superadmin";
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -965,8 +969,7 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
 
   async function openUser(user: UserRead) {
     setSelectedUser(user);
-    setListings([]);
-    setSelectedTask(null);
+    setTaskListings({});
     setTasks(await api.adminUserTasks(token, user.id, true));
   }
 
@@ -992,6 +995,17 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
     }
   }
 
+  async function changeRole(user: UserRead, role: "user" | "admin") {
+    try {
+      const updated = await api.adminUpdateUserRole(token, user.id, role);
+      onNotice(role === "admin" ? "Пользователь повышен до администратора" : "Права администратора сняты");
+      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      if (selectedUser?.id === updated.id) setSelectedUser(updated);
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
+  }
+
   async function toggleTask(task: TaskRead) {
     try {
       const updated = await api.adminUpdateTask(token, task.id, !task.is_active);
@@ -1006,10 +1020,7 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
     try {
       await api.adminDeleteTask(token, task.id);
       onNotice("Задача удалена");
-      if (selectedTask?.id === task.id) {
-        setSelectedTask(null);
-        setListings([]);
-      }
+      setTaskListings((prev) => { const next = { ...prev }; delete next[task.id]; return next; });
       if (selectedUser) {
         setTasks(await api.adminUserTasks(token, selectedUser.id, true));
       }
@@ -1018,19 +1029,20 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
     }
   }
 
-  async function openTaskListings(task: TaskRead) {
-    if (selectedTask?.id === task.id) {
-      setSelectedTask(null);
-      setListings([]);
+  async function toggleTaskListings(task: TaskRead) {
+    if (task.id in taskListings) {
+      setTaskListings((prev) => { const next = { ...prev }; delete next[task.id]; return next; });
       return;
     }
-    setSelectedTask(task);
-    setListings(await api.adminTaskListings(token, task.id));
+    const items = await api.adminTaskListings(token, task.id);
+    setTaskListings((prev) => ({ ...prev, [task.id]: items }));
   }
 
-  function closeListings() {
-    setSelectedTask(null);
-    setListings([]);
+  function copyUrl(url: string) {
+    navigator.clipboard.writeText(url).then(
+      () => onNotice("URL скопирован"),
+      () => onNotice("Не удалось скопировать URL"),
+    );
   }
 
   return (
@@ -1068,6 +1080,16 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
                   <td className="subtle">{formatDate(item.created_at)}</td>
                   <td className="actions">
                     <IconButton title="Задачи пользователя" onClick={() => openUser(item)}><Eye size={16} /></IconButton>
+                    {isSuperadmin && item.user_role === "user" && (
+                      <IconButton title="Назначить администратором" onClick={() => changeRole(item, "admin")}>
+                        <UserPlus size={16} />
+                      </IconButton>
+                    )}
+                    {isSuperadmin && item.user_role === "admin" && (
+                      <IconButton title="Снять права администратора" danger onClick={() => changeRole(item, "user")}>
+                        <UserMinus size={16} />
+                      </IconButton>
+                    )}
                     {item.status === "banned" ? (
                       <IconButton title="Разблокировать" onClick={() => unban(item)}><ShieldOff size={16} /></IconButton>
                     ) : item.status === "active" ? (
@@ -1120,14 +1142,14 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
                     <span
                       className="subtle oneLine taskUrl"
                       title="Двойной клик — скопировать URL"
-                      onDoubleClick={() => navigator.clipboard.writeText(task.url).catch(() => undefined)}
+                      onDoubleClick={() => copyUrl(task.url)}
                     >
                       {task.url}
                     </span>
                     <div className="actions">
                       <IconButton
-                        title={selectedTask?.id === task.id ? "Скрыть объявления" : "Объявления"}
-                        onClick={() => openTaskListings(task)}
+                        title={task.id in taskListings ? "Скрыть объявления" : "Показать объявления"}
+                        onClick={() => toggleTaskListings(task)}
                       >
                         <Eye size={16} />
                       </IconButton>
@@ -1141,14 +1163,19 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
                       )}
                     </div>
                   </div>
-                  {selectedTask?.id === task.id && (
+                  {task.id in taskListings && (
                     <div className="adminListingsSection">
                       <div className="listingsHeader">
                         <span className="adminListingsTitle">Объявления</span>
-                        <IconButton title="Скрыть" onClick={closeListings}><X size={16} /></IconButton>
+                        <IconButton
+                          title="Скрыть"
+                          onClick={() => setTaskListings((prev) => { const next = { ...prev }; delete next[task.id]; return next; })}
+                        >
+                          <X size={16} />
+                        </IconButton>
                       </div>
-                      {listings.length > 0
-                        ? <ListingList listings={listings} compact />
+                      {(taskListings[task.id] ?? []).length > 0
+                        ? <ListingList listings={taskListings[task.id]} compact />
                         : <p className="empty">Объявлений пока нет</p>
                       }
                     </div>

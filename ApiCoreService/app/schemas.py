@@ -317,5 +317,11 @@ class AdminTaskPatch(BaseModel):
     is_active: bool
 
 
+class AdminRolePatch(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"user_role": "admin"}]})
+
+    user_role: Literal["user", "admin"]
+
+
 class MessageResponse(BaseModel):
     message: str
