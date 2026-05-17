@@ -1019,6 +1019,11 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
   }
 
   async function openTaskListings(task: TaskRead) {
+    if (selectedTask?.id === task.id) {
+      setSelectedTask(null);
+      setListings([]);
+      return;
+    }
     setSelectedTask(task);
     setListings(await api.adminTaskListings(token, task.id));
   }
@@ -1099,50 +1104,62 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
             </div>
             <div className="compactList">
               {tasks.map((task) => (
-                <div className={`compactItem adminTaskItem${task.deleted_at ? " adminTaskDeleted" : ""}`} key={task.id}>
-                  <div className="adminTaskHeader">
-                    <strong className="oneLine">{task.name || "Без названия"}</strong>
-                    <AdminTaskStatusBadge task={task} />
-                  </div>
-                  <div className="adminTaskMeta">
-                    <span className="platformTag">{task.platform}</span>
-                    <span className="subtle">{task.interval_minutes} мин</span>
-                  </div>
-                  <span
-                    className="subtle oneLine taskUrl"
-                    title="Двойной клик — скопировать URL"
-                    onDoubleClick={() => navigator.clipboard.writeText(task.url).catch(() => undefined)}
-                  >
-                    {task.url}
-                  </span>
-                  <div className="actions">
-                    <IconButton title="Объявления" onClick={() => openTaskListings(task)}><Eye size={16} /></IconButton>
-                    {!task.deleted_at && (
-                      <IconButton title={task.is_active ? "Приостановить" : "Возобновить"} onClick={() => toggleTask(task)}>
-                        {task.is_active ? <Pause size={16} /> : <Play size={16} />}
+                <React.Fragment key={task.id}>
+                  <div className={`compactItem adminTaskItem${task.deleted_at ? " adminTaskDeleted" : ""}`}>
+                    <div className="adminTaskHeader">
+                      <strong className="oneLine">{task.name || "Без названия"}</strong>
+                      <AdminTaskStatusBadge task={task} />
+                    </div>
+                    <div className="adminTaskMeta">
+                      <span className="platformTag">{task.platform}</span>
+                      <span className="subtle">{task.interval_minutes} мин</span>
+                    </div>
+                    {task.end_date && (
+                      <span className="subtle adminTaskEndDate">до {formatDate(task.end_date)}</span>
+                    )}
+                    <span
+                      className="subtle oneLine taskUrl"
+                      title="Двойной клик — скопировать URL"
+                      onDoubleClick={() => navigator.clipboard.writeText(task.url).catch(() => undefined)}
+                    >
+                      {task.url}
+                    </span>
+                    <div className="actions">
+                      <IconButton
+                        title={selectedTask?.id === task.id ? "Скрыть объявления" : "Объявления"}
+                        onClick={() => openTaskListings(task)}
+                      >
+                        <Eye size={16} />
                       </IconButton>
-                    )}
-                    {!task.deleted_at && (
-                      <IconButton title="Удалить" danger onClick={() => removeTask(task)}><Trash2 size={16} /></IconButton>
-                    )}
+                      {!task.deleted_at && (
+                        <IconButton title={task.is_active ? "Приостановить" : "Возобновить"} onClick={() => toggleTask(task)}>
+                          {task.is_active ? <Pause size={16} /> : <Play size={16} />}
+                        </IconButton>
+                      )}
+                      {!task.deleted_at && (
+                        <IconButton title="Удалить" danger onClick={() => removeTask(task)}><Trash2 size={16} /></IconButton>
+                      )}
+                    </div>
                   </div>
-                </div>
+                  {selectedTask?.id === task.id && (
+                    <div className="adminListingsSection">
+                      <div className="listingsHeader">
+                        <span className="adminListingsTitle">Объявления</span>
+                        <IconButton title="Скрыть" onClick={closeListings}><X size={16} /></IconButton>
+                      </div>
+                      {listings.length > 0
+                        ? <ListingList listings={listings} compact />
+                        : <p className="empty">Объявлений пока нет</p>
+                      }
+                    </div>
+                  )}
+                </React.Fragment>
               ))}
               {!tasks.length && <p className="empty">Задач нет</p>}
             </div>
           </>
         ) : (
           <p className="empty adminSidePlaceholder">Выберите пользователя чтобы увидеть его задачи</p>
-        )}
-
-        {!!listings.length && (
-          <div className="adminListingsSection">
-            <div className="listingsHeader">
-              <h2>Объявления{selectedTask ? ` — ${selectedTask.name || selectedTask.platform}` : ""}</h2>
-              <IconButton title="Закрыть" onClick={closeListings}><X size={16} /></IconButton>
-            </div>
-            <ListingList listings={listings} compact />
-          </div>
         )}
       </aside>
     </section>
@@ -1158,7 +1175,7 @@ function UserStatusBadge({ status }: { status: UserStatus }) {
 function RoleBadge({ role }: { role: string }) {
   if (role === "superadmin") return <span className="badge roleSuperadmin">{role}</span>;
   if (role === "admin") return <span className="badge roleAdmin">{role}</span>;
-  return <span className="subtle">{role}</span>;
+  return <span className="badge roleUser">{role}</span>;
 }
 
 function AdminTaskStatusBadge({ task }: { task: TaskRead }) {
