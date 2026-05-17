@@ -80,6 +80,11 @@ export interface MessageResponse {
   message: string;
 }
 
+export interface VKChannelStartResponse {
+  token: string;
+  expires_at: string;
+}
+
 export interface ApiErrorPayload {
   detail?: string | Array<{ msg?: string; loc?: Array<string | number> }>;
 }

@@ -504,6 +504,57 @@ tr:last-child td {
   align-items: start;
 }
 
+.notifAddCard {
+  border: 1px solid #dde3ea;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.notifTypeSelector {
+  display: flex;
+  border-bottom: 1px solid #dde3ea;
+}
+
+.notifTypeTab {
+  flex: 1;
+  padding: 10px 0;
+  background: #f9fafb;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: #667384;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notifTypeTab:first-child {
+  border-right: 1px solid #dde3ea;
+}
+
+.notifTypeTab.active {
+  background: #fff;
+  color: #1864ab;
+  font-weight: 600;
+}
+
+.notifTypeTab:hover:not(.active) {
+  background: #f0f4f8;
+  color: #374151;
+}
+
+.notifTypeBody {
+  padding: 16px;
+  background: #fff;
+  display: grid;
+  gap: 10px;
+}
+
+.notifVKHint {
+  display: grid;
+  gap: 12px;
+}
+
 .notifAddPanel {
   display: grid;
   gap: 8px;
@@ -639,6 +690,27 @@ tr:last-child td {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.vkLinkBox {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  background: #f0f4ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+}
+
+.vkLinkToken {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+  background: #fff;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  padding: 10px 14px;
+  cursor: default;
+  user-select: all;
 }
 
 .modalBackdrop {

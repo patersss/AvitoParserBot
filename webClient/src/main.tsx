@@ -33,6 +33,7 @@ import type {
   UserRead,
   UserRole,
   UserStatus,
+  VKChannelStartResponse,
 } from "./types";
 import "./styles.css";
 
@@ -586,10 +587,17 @@ function ListingsPage({ token }: { token: string }) {
 
 function NotificationsPage({ token, onNotice }: { token: string; onNotice: (value: string) => void }) {
   const [channels, setChannels] = React.useState<NotificationChannelRead[]>([]);
+  const [addType, setAddType] = React.useState<"email" | "vk">("email");
+
+  // email state
   const [email, setEmail] = React.useState("");
   const [verification, setVerification] = React.useState<EmailStartResponse | null>(null);
   const [code, setCode] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+
+  // vk state
+  const [vkLinkInfo, setVkLinkInfo] = React.useState<VKChannelStartResponse | null>(null);
+  const [vkLoading, setVkLoading] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setChannels(await api.listNotificationChannels(token));
@@ -599,20 +607,29 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
     load().catch(() => undefined);
   }, [load]);
 
+  function switchType(type: "email" | "vk") {
+    setAddType(type);
+    setVerification(null);
+    setCode("");
+    setEmail("");
+    setEmailError(null);
+    setVkLinkInfo(null);
+  }
+
   async function startEmail(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
+    setEmailError(null);
     try {
       setVerification(await api.startNotificationEmail(token, email));
     } catch (err) {
-      setError(errorMessage(err));
+      setEmailError(errorMessage(err));
     }
   }
 
   async function confirmEmail(event: React.FormEvent) {
     event.preventDefault();
     if (!verification) return;
-    setError(null);
+    setEmailError(null);
     try {
       await api.confirmNotificationEmail(token, verification.verification_id, code);
       setVerification(null);
@@ -621,7 +638,18 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
       onNotice("Email-канал добавлен");
       await load();
     } catch (err) {
-      setError(errorMessage(err));
+      setEmailError(errorMessage(err));
+    }
+  }
+
+  async function startVK() {
+    setVkLoading(true);
+    try {
+      setVkLinkInfo(await api.startVKChannel(token));
+    } catch (err) {
+      onNotice(errorMessage(err));
+    } finally {
+      setVkLoading(false);
     }
   }
 
@@ -656,38 +684,110 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
     <section className="notifPage">
       <PageHeader title="Уведомления" action={<Bell size={20} />} />
 
-      <div className="notifAddPanel">
-        {!verification ? (
-          <form className="notifAddForm" onSubmit={startEmail}>
-            <input
-              type="email"
-              placeholder="Email для уведомлений"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-            <button className="primaryButton" type="submit">
-              <Plus size={16} />
-              Добавить email
-            </button>
-          </form>
-        ) : (
-          <form className="notifAddForm" onSubmit={confirmEmail}>
-            <input
-              placeholder={`Код из письма (${email})`}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              required
-              autoFocus
-            />
-            {verification.dev_code && <span className="devCode" style={{ fontSize: 12 }}>dev: {verification.dev_code}</span>}
-            <button className="primaryButton" type="submit"><Check size={16} />Подтвердить</button>
-            <button type="button" className="ghostButton" onClick={() => { setVerification(null); setCode(""); }}>
-              <X size={16} />Отмена
-            </button>
-          </form>
+      <div className="notifAddCard">
+        <div className="notifTypeSelector">
+          <button
+            type="button"
+            className={addType === "email" ? "notifTypeTab active" : "notifTypeTab"}
+            onClick={() => switchType("email")}
+          >
+            Email
+          </button>
+          <button
+            type="button"
+            className={addType === "vk" ? "notifTypeTab active" : "notifTypeTab"}
+            onClick={() => switchType("vk")}
+          >
+            ВКонтакте
+          </button>
+        </div>
+
+        {addType === "email" && (
+          <div className="notifTypeBody">
+            {!verification ? (
+              <form className="notifAddForm" onSubmit={startEmail}>
+                <input
+                  type="email"
+                  placeholder="Email для уведомлений"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoFocus
+                />
+                <button className="primaryButton" type="submit">
+                  <Plus size={16} />
+                  Добавить
+                </button>
+              </form>
+            ) : (
+              <form className="notifAddForm" onSubmit={confirmEmail}>
+                <input
+                  placeholder={`Код из письма (${email})`}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  required
+                  autoFocus
+                />
+                {verification.dev_code && (
+                  <span className="devCode" style={{ fontSize: 12 }}>dev: {verification.dev_code}</span>
+                )}
+                <button className="primaryButton" type="submit">
+                  <Check size={16} />Подтвердить
+                </button>
+                <button type="button" className="ghostButton" onClick={() => { setVerification(null); setCode(""); }}>
+                  <X size={16} />Отмена
+                </button>
+              </form>
+            )}
+            {emailError && <p className="errorText" style={{ margin: 0 }}>{emailError}</p>}
+          </div>
         )}
-        {error && <p className="errorText" style={{ margin: 0 }}>{error}</p>}
+
+        {addType === "vk" && (
+          <div className="notifTypeBody">
+            {!vkLinkInfo ? (
+              <div className="notifVKHint">
+                <p className="hint" style={{ margin: 0 }}>
+                  Нажмите кнопку — получите код и отправьте его боту сообщества ВКонтакте.
+                  После этого обновите список каналов.
+                </p>
+                <button className="primaryButton" onClick={startVK} disabled={vkLoading}>
+                  {vkLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                  Получить код
+                </button>
+              </div>
+            ) : (
+              <div className="vkLinkBox">
+                <p className="hint" style={{ margin: 0 }}>Отправьте этот код боту ВКонтакте:</p>
+                <div
+                  className="vkLinkToken"
+                  title="Двойной клик — скопировать"
+                  onDoubleClick={() =>
+                    navigator.clipboard.writeText(vkLinkInfo.token).then(
+                      () => onNotice("Код скопирован"),
+                      () => undefined,
+                    )
+                  }
+                >
+                  {vkLinkInfo.token}
+                </div>
+                <p className="hint" style={{ margin: 0, fontSize: 12 }}>
+                  Код действителен до {new Date(vkLinkInfo.expires_at).toLocaleTimeString()}.
+                </p>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button className="ghostButton" onClick={() => load().then(() => setVkLinkInfo(null))}>
+                    <RefreshCw size={16} />
+                    Обновить список
+                  </button>
+                  <button className="ghostButton" onClick={() => setVkLinkInfo(null)}>
+                    <X size={16} />
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="channelList">
@@ -698,11 +798,14 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
               ? String(channel.config.email ?? "")
               : channel.type === "telegram"
               ? `chat_id: ${channel.config.chat_id}`
+              : channel.type === "vk"
+              ? `vk_user_id: ${channel.config.vk_user_id}`
               : JSON.stringify(channel.config);
-          const label = channel.type === "email" ? "Email" : channel.type === "telegram" ? "Telegram" : channel.type;
+          const icon = channel.type === "telegram" ? "TG" : channel.type === "vk" ? "VK" : "@";
+          const label = channel.type === "email" ? "Email" : channel.type === "telegram" ? "Telegram" : channel.type === "vk" ? "ВКонтакте" : channel.type;
           return (
             <div className="channelCard" key={channel.id}>
-              <div className="channelCardIcon">{channel.type === "telegram" ? "TG" : "@"}</div>
+              <div className="channelCardIcon">{icon}</div>
               <div className="channelCardInfo">
                 <span className="channelType">{label}</span>
                 <span className="channelAddress">{address}</span>

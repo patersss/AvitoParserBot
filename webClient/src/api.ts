@@ -12,6 +12,7 @@ import type {
   UserRead,
   UserRole,
   UserStatus,
+  VKChannelStartResponse,
 } from "./types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -190,6 +191,12 @@ export const api = {
     return request<NotificationChannelRead>("/notification-channels/email/confirm", {
       method: "POST",
       body: JSON.stringify({ verification_id, code }),
+    }, token);
+  },
+
+  startVKChannel(token: string) {
+    return request<VKChannelStartResponse>("/notification-channels/vk/start", {
+      method: "POST",
     }, token);
   },
 

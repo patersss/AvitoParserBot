@@ -84,6 +84,8 @@ services:
       AUTH_EMAIL_VERIFICATION_ROUTING_KEY: auth.email.verification
       AUTH_EMAIL_RESET_ROUTING_KEY: auth.email.password_reset
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      VK_GROUP_TOKEN: ${VK_GROUP_TOKEN:-}
+      VK_API_VERSION: ${VK_API_VERSION:-5.199}
       EMAIL_FROM: ${EMAIL_FROM:-avitoparser.noreply@mail.ru}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Parser Monitor}
       SMTP_HOST: ${SMTP_HOST:-smtp.mail.ru}
@@ -118,6 +120,9 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       NOTIFICATION_EXCHANGE: notification.events
       NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
+      VK_GROUP_TOKEN: ${VK_GROUP_TOKEN:-}
+      VK_GROUP_ID: ${VK_GROUP_ID:-}
+      VK_API_VERSION: ${VK_API_VERSION:-5.199}
     depends_on:
       - api_core_service
       - notification_service

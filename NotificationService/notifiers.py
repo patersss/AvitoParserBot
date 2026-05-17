@@ -1,5 +1,6 @@
 import html
 import logging
+import secrets
 from email.headerregistry import Address
 from email.message import EmailMessage
 from typing import Any
@@ -49,6 +50,73 @@ class TelegramNotifier:
             if response.status >= 400:
                 body = await response.text()
                 raise RuntimeError(f"Telegram sendMessage failed with {response.status}: {body}")
+
+
+# ---------------------------------------------------------------------------
+# VK
+# ---------------------------------------------------------------------------
+
+class VKNotifier:
+    _API_URL = "https://api.vk.com/method/messages.send"
+
+    def __init__(self):
+        self.session: aiohttp.ClientSession | None = None
+
+    async def close(self):
+        if self.session:
+            await self.session.close()
+
+    async def _send_message(self, vk_user_id: int, text: str) -> None:
+        if not settings.vk_group_token:
+            raise RuntimeError("VK_GROUP_TOKEN is required for VK notifications")
+
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+
+        params = {
+            "user_id": vk_user_id,
+            "message": text,
+            "random_id": secrets.randbelow(2**31),
+            "access_token": settings.vk_group_token,
+            "v": settings.vk_api_version,
+        }
+        async with self.session.post(self._API_URL, data=params) as response:
+            if response.status >= 400:
+                body = await response.text()
+                raise RuntimeError(f"VK messages.send HTTP {response.status}: {body}")
+            data = await response.json()
+            if "error" in data:
+                err = data["error"]
+                raise RuntimeError(f"VK API error {err.get('error_code')}: {err.get('error_msg')}")
+
+    async def send_listing(self, config: dict, event: dict) -> None:
+        vk_user_id = config.get("vk_user_id")
+        if not vk_user_id:
+            raise ValueError("VK channel config requires vk_user_id")
+        text = format_listing_message(event)
+        await self._send_message(int(vk_user_id), text)
+
+    async def send_listings_batch(self, config: dict, event: dict) -> None:
+        vk_user_id = config.get("vk_user_id")
+        if not vk_user_id:
+            raise ValueError("VK channel config requires vk_user_id")
+
+        task_name = event.get("task_name") or "без названия"
+        listings = event.get("listings") or []
+        if not listings:
+            return
+
+        count = len(listings)
+        lines = [f"Найдено {count} новых объявлений по задаче «{task_name}»\n"]
+        for listing in listings:
+            title = listing.get("title") or "Новое объявление"
+            price = format_price(listing.get("price"))
+            url = listing.get("url") or ""
+            lines.append(f"— {title}\n  Цена: {price}\n  {url}")
+
+        text = "\n\n".join(lines)
+        await self._send_message(int(vk_user_id), text)
+        logger.info("VK batch notification sent to vk_user_id=%s (%d listings)", vk_user_id, count)
 
 
 # ---------------------------------------------------------------------------

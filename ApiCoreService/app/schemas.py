@@ -323,5 +323,10 @@ class AdminRolePatch(BaseModel):
     user_role: Literal["user", "admin"]
 
 
+class VKChannelStartResponse(BaseModel):
+    token: str
+    expires_at: datetime
+
+
 class MessageResponse(BaseModel):
     message: str

@@ -24,6 +24,10 @@ class Settings:
 
     telegram_token: str = os.getenv("TELEGRAM_TOKEN", "")
     telegram_parse_mode: str | None = os.getenv("TELEGRAM_PARSE_MODE") or None
+
+    # VK Bot
+    vk_group_token: str = os.getenv("VK_GROUP_TOKEN", "")
+    vk_api_version: str = os.getenv("VK_API_VERSION", "5.199")
     startup_retry_attempts: int = int(os.getenv("STARTUP_RETRY_ATTEMPTS", "30"))
     startup_retry_delay_seconds: float = float(os.getenv("STARTUP_RETRY_DELAY_SECONDS", "2"))
 

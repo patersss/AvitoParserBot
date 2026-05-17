@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from database import init_db
-from notifiers import EmailNotifier, TelegramNotifier
+from notifiers import EmailNotifier, TelegramNotifier, VKNotifier
 from rabbitmq import RabbitMQClient
 from repositories import ChannelRepository
 
@@ -16,6 +16,7 @@ class NotificationService:
         self.channels = ChannelRepository()
         self.telegram = TelegramNotifier()
         self.email = EmailNotifier()
+        self.vk = VKNotifier()
 
     async def start(self):
         await init_db()
@@ -27,6 +28,7 @@ class NotificationService:
     async def stop(self):
         await self.rabbitmq.close()
         await self.telegram.close()
+        await self.vk.close()
 
     async def handle_event(self, payload: dict):
         event_type = payload.get("event_type") or payload.get("type")
@@ -118,6 +120,8 @@ class NotificationService:
                     await self.telegram.send_listing(channel.config, single_payload)
             elif channel.type == "email":
                 await self.email.send_listings_batch(channel.config, payload)
+            elif channel.type == "vk":
+                await self.vk.send_listings_batch(channel.config, payload)
             else:
                 logger.info("Unsupported channel type %s for user %s", channel.type, user_id)
 
@@ -137,6 +141,8 @@ class NotificationService:
                 await self.telegram.send_listing(channel.config, payload)
             elif channel.type == "email":
                 await self.email.send_listing(channel.config, payload)
+            elif channel.type == "vk":
+                await self.vk.send_listing(channel.config, payload)
             else:
                 logger.info("Unsupported channel type %s for user %s", channel.type, user_id)
 

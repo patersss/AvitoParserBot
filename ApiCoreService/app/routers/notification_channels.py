@@ -4,13 +4,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.dependencies import get_current_user
-from app.models import EmailVerification, NotificationChannel, User
+from app.dependencies import get_current_user, verify_service_token
+from app.models import EmailVerification, LoginToken, NotificationChannel, User
 from app.schemas import (
     EmailStartResponse,
     MessageResponse,
@@ -19,8 +20,9 @@ from app.schemas import (
     NotificationChannelUpdate,
     NotificationEmailConfirmRequest,
     NotificationEmailStartRequest,
+    VKChannelStartResponse,
 )
-from app.security import generate_email_code, hash_secret
+from app.security import generate_url_token, generate_email_code, hash_secret
 from app.services.email import email_sender
 from app.services.rabbitmq import rabbitmq
 
@@ -297,3 +299,100 @@ async def _find_user_channel_by_email(
         )
     )
     return result.scalars().first()
+
+
+@router.post(
+    "/vk/start",
+    response_model=VKChannelStartResponse,
+    summary="Start VK channel linking",
+    description=(
+        "Generates a one-time linking token the user must send to the VK bot. "
+        "The token expires after a short time and is stored hashed in login_tokens "
+        "with purpose `vk_channel_link`."
+    ),
+    response_description="Raw one-time token and its expiration timestamp.",
+)
+async def start_vk_channel_link(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VKChannelStartResponse:
+    raw_token = generate_url_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    db.add(
+        LoginToken(
+            token_hash=hash_secret(raw_token),
+            user_id=user.id,
+            purpose="vk_channel_link",
+            expires_at=expires_at,
+        )
+    )
+    await db.commit()
+    return VKChannelStartResponse(token=raw_token, expires_at=expires_at)
+
+
+class _VKLinkPayload(BaseModel):
+    token: str
+    vk_user_id: int
+
+
+@router.post(
+    "/vk/link",
+    response_model=NotificationChannelRead,
+    summary="Complete VK channel linking (internal)",
+    description=(
+        "Internal endpoint called by the VK bot after the user sends the linking token. "
+        "Validates the token, creates (or reactivates) the VK notification channel and "
+        "publishes `channel.upserted`. Requires `X-Service-Token`."
+    ),
+    response_description="Created or updated VK notification channel.",
+    dependencies=[Depends(verify_service_token)],
+)
+async def link_vk_channel(
+    payload: _VKLinkPayload,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> NotificationChannel:
+    token_hash = hash_secret(payload.token)
+    login_token = await db.get(LoginToken, token_hash)
+    now = datetime.now(timezone.utc)
+
+    if not login_token or login_token.purpose != "vk_channel_link":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
+    if login_token.used_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token already used")
+    if login_token.expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token expired")
+
+    login_token.used_at = now
+    user_id = login_token.user_id
+
+    result = await db.execute(
+        select(NotificationChannel).where(
+            NotificationChannel.user_id == user_id,
+            NotificationChannel.type == "vk",
+        )
+    )
+    channel = result.scalars().first()
+    if channel:
+        channel.config = {"vk_user_id": payload.vk_user_id}
+        channel.is_active = True
+        channel.deleted_at = None
+    else:
+        channel = NotificationChannel(
+            user_id=user_id,
+            type="vk",
+            config={"vk_user_id": payload.vk_user_id},
+            is_active=True,
+        )
+        db.add(channel)
+
+    await db.commit()
+    await db.refresh(channel)
+
+    try:
+        await rabbitmq.publish_channel_upserted(channel, user_id)
+    except Exception:
+        logger.exception("Failed to publish channel.upserted for VK channel user %s", user_id)
+
+    return channel
+
+
