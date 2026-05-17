@@ -37,6 +37,9 @@ import type {
 } from "./types";
 import "./styles.css";
 
+const _vkGroupId = import.meta.env.VITE_VK_GROUP_ID as string | undefined;
+const VK_GROUP_URL = _vkGroupId ? `https://vk.com/club${_vkGroupId}` : null;
+
 type Page = "tasks" | "listings" | "notifications" | "account" | "admin";
 
 const platformOptions: Platform[] = ["avito", "cian", "youla"];
@@ -758,7 +761,12 @@ function NotificationsPage({ token, onNotice }: { token: string; onNotice: (valu
               </div>
             ) : (
               <div className="vkLinkBox">
-                <p className="hint" style={{ margin: 0 }}>Отправьте этот код боту ВКонтакте:</p>
+                <p className="hint" style={{ margin: 0 }}>
+                  Отправьте этот код боту сообщества
+                  {VK_GROUP_URL && (
+                    <> (<a href={VK_GROUP_URL} target="_blank" rel="noreferrer">открыть группу</a>)</>
+                  )}:
+                </p>
                 <div
                   className="vkLinkToken"
                   title="Двойной клик — скопировать"

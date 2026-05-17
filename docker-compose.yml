@@ -17,7 +17,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-dev-service-token}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
-      EXPOSE_DEV_EMAIL_CODE: ${EXPOSE_DEV_EMAIL_CODE:-true}
+      EXPOSE_DEV_EMAIL_CODE: ${EXPOSE_DEV_EMAIL_CODE:-false}
       AUTH_EMAIL_VERIFICATION_ROUTING_KEY: auth.email.verification
       AUTH_EMAIL_RESET_ROUTING_KEY: auth.email.password_reset
       NOTIFICATION_CHANNEL_ROUTING_KEY: notification.channel.upserted
@@ -133,6 +133,7 @@ services:
       context: ./webClient/
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_VK_GROUP_ID: ${VK_GROUP_ID:-}
     restart: unless-stopped
     ports:
       - "3000:80"
