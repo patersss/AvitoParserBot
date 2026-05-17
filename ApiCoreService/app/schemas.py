@@ -311,5 +311,11 @@ class AdminBanRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class AdminTaskPatch(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"is_active": False}]})
+
+    is_active: bool
+
+
 class MessageResponse(BaseModel):
     message: str

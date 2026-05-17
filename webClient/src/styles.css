@@ -371,6 +371,25 @@ tr:last-child td {
   text-align: center;
 }
 
+.danger {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.roleSuperadmin {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.roleAdmin {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.selectedRow td {
+  background: #f5f9ff;
+}
+
 .listingList {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -735,6 +754,115 @@ tr:last-child td {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Admin Panel */
+
+.adminSidePanel {
+  position: sticky;
+  top: 28px;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+
+.adminUserHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #eef2f6;
+}
+
+.adminUserAvatar {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #1f2937;
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.adminUserInfo {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.adminUserInfo strong {
+  font-size: 14px;
+  color: #111827;
+}
+
+.adminSectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adminTaskItem {
+  position: relative;
+}
+
+.adminTaskDeleted {
+  opacity: 0.55;
+}
+
+.adminTaskHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.adminTaskHeader strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.adminTaskMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.platformTag {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #eef2f6;
+  color: #394453;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.adminSidePlaceholder {
+  padding: 48px 0;
+  font-size: 14px;
+}
+
+.adminListingsSection {
+  padding-top: 16px;
+  border-top: 1px solid #eef2f6;
+  margin-top: 4px;
+}
+
+.listingsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 @media (max-width: 1100px) {

@@ -211,6 +211,13 @@ export const api = {
     return request<MessageResponse>(`/admin/users/${userId}/unban`, { method: "PATCH" }, token);
   },
 
+  adminUpdateTask(token: string, taskId: string, isActive: boolean) {
+    return request<TaskRead>(`/admin/tasks/${taskId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_active: isActive }),
+    }, token);
+  },
+
   adminDeleteTask(token: string, taskId: string) {
     return request<MessageResponse>(`/admin/tasks/${taskId}`, { method: "DELETE" }, token);
   },

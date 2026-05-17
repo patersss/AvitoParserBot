@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -59,7 +59,9 @@ async def upsert_telegram_user(
         telegram_account.chat_id = payload.chat_id
         telegram_account.username = payload.username
     else:
-        user = User(username=payload.username, avatar_url=payload.avatar_url)
+        user_count = await db.scalar(select(func.count()).select_from(User))
+        role = "superadmin" if user_count == 0 else "user"
+        user = User(username=payload.username, avatar_url=payload.avatar_url, user_role=role)
         db.add(user)
         await db.flush()
         telegram_account = TelegramAccount(

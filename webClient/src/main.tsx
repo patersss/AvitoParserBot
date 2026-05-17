@@ -13,8 +13,8 @@ import {
   RefreshCw,
   Save,
   Shield,
+  ShieldOff,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 
@@ -126,7 +126,7 @@ function App() {
           <NavButton active={page === "listings"} onClick={() => setPage("listings")}>Объявления</NavButton>
           <NavButton active={page === "notifications"} onClick={() => setPage("notifications")}>Уведомления</NavButton>
           <NavButton active={page === "account"} onClick={() => setPage("account")}>Аккаунт</NavButton>
-          {isAdmin && <NavButton active={page === "admin"} onClick={() => setPage("admin")}>Админка</NavButton>}
+          {isAdmin && <NavButton active={page === "admin"} onClick={() => setPage("admin")}>Администрирование</NavButton>}
         </nav>
 
         <div className="sidebarFooter">
@@ -935,22 +935,29 @@ function AccountPage({ token, user, onUser, onNotice }: { token: string; user: U
   );
 }
 
+const userStatusLabels: Record<UserStatus, string> = {
+  active: "Активные",
+  banned: "Заблокированные",
+  deleted: "Удалённые",
+};
+
 function AdminPage({ token, onNotice }: { token: string; onNotice: (value: string) => void }) {
   const [users, setUsers] = React.useState<UserRead[]>([]);
-  const [status, setStatus] = React.useState<UserStatus | "">("");
+  const [statusFilter, setStatusFilter] = React.useState<UserStatus | "">("");
   const [selectedUser, setSelectedUser] = React.useState<UserRead | null>(null);
   const [tasks, setTasks] = React.useState<TaskRead[]>([]);
+  const [selectedTask, setSelectedTask] = React.useState<TaskRead | null>(null);
   const [listings, setListings] = React.useState<ListingRead[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      setUsers(await api.adminUsers(token, status || undefined));
+      setUsers(await api.adminUsers(token, statusFilter || undefined));
     } finally {
       setLoading(false);
     }
-  }, [token, status]);
+  }, [token, statusFilter]);
 
   React.useEffect(() => {
     load().catch(() => undefined);
@@ -959,87 +966,204 @@ function AdminPage({ token, onNotice }: { token: string; onNotice: (value: strin
   async function openUser(user: UserRead) {
     setSelectedUser(user);
     setListings([]);
+    setSelectedTask(null);
     setTasks(await api.adminUserTasks(token, user.id, true));
   }
 
   async function ban(user: UserRead) {
-    await api.adminBanUser(token, user.id, "Moderated from web admin");
-    onNotice("Пользователь забанен");
-    await load();
+    try {
+      await api.adminBanUser(token, user.id, "Moderated from web admin");
+      onNotice("Пользователь заблокирован");
+      if (selectedUser?.id === user.id) setSelectedUser({ ...user, status: "banned" });
+      await load();
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
   }
 
   async function unban(user: UserRead) {
-    await api.adminUnbanUser(token, user.id);
-    onNotice("Пользователь разбанен");
-    await load();
+    try {
+      await api.adminUnbanUser(token, user.id);
+      onNotice("Пользователь разблокирован");
+      if (selectedUser?.id === user.id) setSelectedUser({ ...user, status: "active" });
+      await load();
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
+  }
+
+  async function toggleTask(task: TaskRead) {
+    try {
+      const updated = await api.adminUpdateTask(token, task.id, !task.is_active);
+      onNotice(updated.is_active ? "Задача возобновлена" : "Задача приостановлена");
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+    } catch (err) {
+      onNotice(errorMessage(err));
+    }
   }
 
   async function removeTask(task: TaskRead) {
-    await api.adminDeleteTask(token, task.id);
-    onNotice("Задача удалена");
-    if (selectedUser) {
-      setTasks(await api.adminUserTasks(token, selectedUser.id, true));
+    try {
+      await api.adminDeleteTask(token, task.id);
+      onNotice("Задача удалена");
+      if (selectedTask?.id === task.id) {
+        setSelectedTask(null);
+        setListings([]);
+      }
+      if (selectedUser) {
+        setTasks(await api.adminUserTasks(token, selectedUser.id, true));
+      }
+    } catch (err) {
+      onNotice(errorMessage(err));
     }
   }
 
   async function openTaskListings(task: TaskRead) {
+    setSelectedTask(task);
     setListings(await api.adminTaskListings(token, task.id));
+  }
+
+  function closeListings() {
+    setSelectedTask(null);
+    setListings([]);
   }
 
   return (
     <section className="pageGrid">
       <div className="mainColumn">
-        <PageHeader title="Админка" action={<ReloadButton loading={loading} onClick={load} />} />
+        <PageHeader title="Администрирование" action={<ReloadButton loading={loading} onClick={load} />} />
         <div className="filters">
-          <select value={status} onChange={(event) => setStatus(event.target.value as UserStatus | "")}>
-            {statusOptions.map((item) => <option key={item || "all"} value={item}>{item || "Все статусы"}</option>)}
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as UserStatus | "")}>
+            <option value="">Все пользователи</option>
+            {(["active", "banned", "deleted"] as UserStatus[]).map((s) => (
+              <option key={s} value={s}>{userStatusLabels[s]}</option>
+            ))}
           </select>
         </div>
         <div className="tableWrap">
           <table>
-            <thead><tr><th>Пользователь</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>Пользователь</th>
+                <th>Роль</th>
+                <th>Статус</th>
+                <th>Зарегистрирован</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
               {users.map((item) => (
-                <tr key={item.id}>
+                <tr key={item.id} className={selectedUser?.id === item.id ? "selectedRow" : ""}>
                   <td>
-                    <strong>{item.login_email || item.username || "Без email"}</strong>
-                    <span className="subtle oneLine">{item.id}</span>
+                    <strong>{item.login_email || "Без email"}</strong>
+                    {item.username && <span className="subtle oneLine">{item.username}</span>}
                   </td>
-                  <td>{item.user_role}</td>
-                  <td>{item.status}</td>
+                  <td><RoleBadge role={item.user_role} /></td>
+                  <td><UserStatusBadge status={item.status} /></td>
+                  <td className="subtle">{formatDate(item.created_at)}</td>
                   <td className="actions">
-                    <IconButton title="Задачи" onClick={() => openUser(item)}><Eye size={16} /></IconButton>
+                    <IconButton title="Задачи пользователя" onClick={() => openUser(item)}><Eye size={16} /></IconButton>
                     {item.status === "banned" ? (
-                      <IconButton title="Разбанить" onClick={() => unban(item)}><Shield size={16} /></IconButton>
-                    ) : (
-                      <IconButton title="Бан" danger onClick={() => ban(item)}><Shield size={16} /></IconButton>
-                    )}
+                      <IconButton title="Разблокировать" onClick={() => unban(item)}><ShieldOff size={16} /></IconButton>
+                    ) : item.status === "active" ? (
+                      <IconButton title="Заблокировать" danger onClick={() => ban(item)}><Shield size={16} /></IconButton>
+                    ) : null}
                   </td>
                 </tr>
               ))}
+              {!users.length && (
+                <tr><td colSpan={5} className="empty">Пользователей не найдено</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
-      <aside className="sidePanel">
-        <h2>{selectedUser ? selectedUser.login_email || selectedUser.id : "Задачи пользователя"}</h2>
-        <div className="compactList">
-          {tasks.map((task) => (
-            <div className="compactItem" key={task.id}>
-              <strong>{task.name || task.platform}</strong>
-              <span className="oneLine">{task.url}</span>
-              <div className="actions">
-                <IconButton title="Объявления" onClick={() => openTaskListings(task)}><Eye size={16} /></IconButton>
-                <IconButton title="Удалить" danger onClick={() => removeTask(task)}><Trash2 size={16} /></IconButton>
+
+      <aside className="sidePanel adminSidePanel">
+        {selectedUser ? (
+          <>
+            <div className="adminUserHeader">
+              <div className="adminUserAvatar">
+                {(selectedUser.username?.[0] || selectedUser.login_email?.[0] || "?").toUpperCase()}
               </div>
+              <div className="adminUserInfo">
+                <strong className="oneLine">{selectedUser.login_email || "Без email"}</strong>
+                <span className="muted oneLine">{selectedUser.username || selectedUser.id}</span>
+              </div>
+              <UserStatusBadge status={selectedUser.status} />
             </div>
-          ))}
-          {!tasks.length && <p className="empty">Нет выбранных задач</p>}
-        </div>
-        {!!listings.length && <ListingList listings={listings} compact />}
+
+            <div className="adminSectionHeader">
+              <h2>Задачи</h2>
+              <span className="badge mutedBadge">{tasks.length}</span>
+            </div>
+            <div className="compactList">
+              {tasks.map((task) => (
+                <div className={`compactItem adminTaskItem${task.deleted_at ? " adminTaskDeleted" : ""}`} key={task.id}>
+                  <div className="adminTaskHeader">
+                    <strong className="oneLine">{task.name || "Без названия"}</strong>
+                    <AdminTaskStatusBadge task={task} />
+                  </div>
+                  <div className="adminTaskMeta">
+                    <span className="platformTag">{task.platform}</span>
+                    <span className="subtle">{task.interval_minutes} мин</span>
+                  </div>
+                  <span
+                    className="subtle oneLine taskUrl"
+                    title="Двойной клик — скопировать URL"
+                    onDoubleClick={() => navigator.clipboard.writeText(task.url).catch(() => undefined)}
+                  >
+                    {task.url}
+                  </span>
+                  <div className="actions">
+                    <IconButton title="Объявления" onClick={() => openTaskListings(task)}><Eye size={16} /></IconButton>
+                    {!task.deleted_at && (
+                      <IconButton title={task.is_active ? "Приостановить" : "Возобновить"} onClick={() => toggleTask(task)}>
+                        {task.is_active ? <Pause size={16} /> : <Play size={16} />}
+                      </IconButton>
+                    )}
+                    {!task.deleted_at && (
+                      <IconButton title="Удалить" danger onClick={() => removeTask(task)}><Trash2 size={16} /></IconButton>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!tasks.length && <p className="empty">Задач нет</p>}
+            </div>
+          </>
+        ) : (
+          <p className="empty adminSidePlaceholder">Выберите пользователя чтобы увидеть его задачи</p>
+        )}
+
+        {!!listings.length && (
+          <div className="adminListingsSection">
+            <div className="listingsHeader">
+              <h2>Объявления{selectedTask ? ` — ${selectedTask.name || selectedTask.platform}` : ""}</h2>
+              <IconButton title="Закрыть" onClick={closeListings}><X size={16} /></IconButton>
+            </div>
+            <ListingList listings={listings} compact />
+          </div>
+        )}
       </aside>
     </section>
   );
+}
+
+function UserStatusBadge({ status }: { status: UserStatus }) {
+  if (status === "active") return <span className="badge success">активен</span>;
+  if (status === "banned") return <span className="badge danger">заблокирован</span>;
+  return <span className="badge mutedBadge">удалён</span>;
+}
+
+function RoleBadge({ role }: { role: string }) {
+  if (role === "superadmin") return <span className="badge roleSuperadmin">{role}</span>;
+  if (role === "admin") return <span className="badge roleAdmin">{role}</span>;
+  return <span className="subtle">{role}</span>;
+}
+
+function AdminTaskStatusBadge({ task }: { task: TaskRead }) {
+  if (task.deleted_at) return <span className="badge mutedBadge">удалена</span>;
+  return <StatusBadge active={task.is_active} />;
 }
 
 function ListingList({ listings, compact = false }: { listings: ListingRead[]; compact?: boolean }) {

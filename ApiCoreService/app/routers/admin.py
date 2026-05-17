@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_admin
 from app.models import ListingHistory, Task, User
-from app.schemas import AdminBanRequest, ListingRead, MessageResponse, TaskRead, UserRead, UserStatus
+from app.schemas import AdminBanRequest, AdminTaskPatch, ListingRead, MessageResponse, TaskRead, UserRead, UserStatus
 from app.services.rabbitmq import rabbitmq
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -131,6 +131,29 @@ async def list_user_tasks(
         conditions.append(Task.deleted_at.is_(None))
     result = await db.execute(select(Task).where(*conditions).order_by(Task.created_at.desc()).limit(limit).offset(offset))
     return list(result.scalars().all())
+
+
+@router.patch(
+    "/tasks/{task_id}",
+    response_model=TaskRead,
+    summary="Update any task",
+    description="Admin-only endpoint to update task fields (e.g., pause or resume parsing).",
+    response_description="Updated task.",
+)
+async def update_task(
+    task_id: UUID,
+    payload: AdminTaskPatch,
+    admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Task:
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    task.is_active = payload.is_active
+    await db.commit()
+    await db.refresh(task)
+    await rabbitmq.publish_task_upserted(task, run_now=False)
+    return task
 
 
 @router.delete(
