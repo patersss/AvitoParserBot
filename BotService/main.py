@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote_plus
 
-import aio_pika
 import aiohttp
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -26,14 +25,8 @@ class Settings:
     api_core_base_url: str = os.getenv("API_CORE_BASE_URL", "http://localhost:8000").rstrip("/")
     service_api_token: str = os.getenv("SERVICE_API_TOKEN", "dev-service-token")
     site_login_url: str = os.getenv("SITE_LOGIN_URL", "http://localhost:3000/login?token={token}")
-    rabbitmq_url: str = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    notification_exchange: str = os.getenv("NOTIFICATION_EXCHANGE", "notification.events")
-    notification_channel_routing_key: str = os.getenv(
-        "NOTIFICATION_CHANNEL_ROUTING_KEY",
-        "notification.channel.upserted",
-    )
     request_timeout_seconds: int = int(os.getenv("BOT_HTTP_TIMEOUT_SECONDS", "15"))
-    min_interval_minutes: int = int(os.getenv("MIN_TASK_INTERVAL_MINUTES", "10"))
+    min_interval_minutes: int = int(os.getenv("MIN_TASK_INTERVAL_MINUTES", "1"))
     max_task_days: int = int(os.getenv("MAX_TASK_DAYS", "365"))
 
 
@@ -160,57 +153,7 @@ class ApiCoreClient:
             return data
 
 
-class NotificationEventPublisher:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.connection: aio_pika.RobustConnection | None = None
-        self.channel: aio_pika.RobustChannel | None = None
-        self.exchange: aio_pika.RobustExchange | None = None
-
-    async def connect(self) -> None:
-        self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
-        self.channel = await self.connection.channel()
-        self.exchange = await self.channel.declare_exchange(
-            self.settings.notification_exchange,
-            aio_pika.ExchangeType.TOPIC,
-            durable=True,
-        )
-        logger.info("Connected to RabbitMQ notification exchange")
-
-    async def close(self) -> None:
-        if self.connection:
-            await self.connection.close()
-
-    async def publish_telegram_channel(self, user: dict, telegram_user: types.User, chat_id: int) -> None:
-        if not self.exchange:
-            await self.connect()
-
-        payload = {
-            "event_type": "notification_channel.upserted",
-            "source_service": "BotService",
-            "user_id": user["id"],
-            "channel": {
-                "type": "telegram",
-                "config": {
-                    "telegram_user_id": telegram_user.id,
-                    "chat_id": chat_id,
-                    "username": telegram_user.username,
-                },
-                "is_active": True,
-            },
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
-        }
-        message = aio_pika.Message(
-            body=json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
-            content_type="application/json",
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-        )
-        assert self.exchange is not None
-        await self.exchange.publish(message, routing_key=self.settings.notification_channel_routing_key)
-
-
 api_core = ApiCoreClient(settings)
-notifications = NotificationEventPublisher(settings)
 
 
 def platform_keyboard(prefix: str = "add_platform") -> InlineKeyboardMarkup:
@@ -329,8 +272,7 @@ async def send_api_error(target: types.Message, error: ApiCoreError) -> None:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
     try:
-        result = await api_core.upsert_telegram_user(message.from_user, message.chat.id)
-        await notifications.publish_telegram_channel(result["user"], message.from_user, message.chat.id)
+        await api_core.upsert_telegram_user(message.from_user, message.chat.id)
     except Exception:
         logger.exception("Failed to initialize Telegram user")
         await message.answer("Не удалось зарегистрировать Telegram-аккаунт. Попробуйте позже.")
@@ -724,15 +666,10 @@ async def set_commands(current_bot: Bot) -> None:
 async def main() -> None:
     await api_core.connect()
     try:
-        try:
-            await notifications.connect()
-        except Exception:
-            logger.exception("RabbitMQ is unavailable. Telegram channel events will retry on demand.")
         await set_commands(bot)
         await dp.start_polling(bot)
     finally:
         await api_core.close()
-        await notifications.close()
 
 
 if __name__ == "__main__":

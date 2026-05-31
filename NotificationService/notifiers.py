@@ -89,13 +89,6 @@ class VKNotifier:
                 err = data["error"]
                 raise RuntimeError(f"VK API error {err.get('error_code')}: {err.get('error_msg')}")
 
-    async def send_listing(self, config: dict, event: dict) -> None:
-        vk_user_id = config.get("vk_user_id")
-        if not vk_user_id:
-            raise ValueError("VK channel config requires vk_user_id")
-        text = format_listing_message(event)
-        await self._send_message(int(vk_user_id), text)
-
     async def send_listings_batch(self, config: dict, event: dict) -> None:
         vk_user_id = config.get("vk_user_id")
         if not vk_user_id:
@@ -111,8 +104,9 @@ class VKNotifier:
         for listing in listings:
             title = listing.get("title") or "Новое объявление"
             price = format_price(listing.get("price"))
+            platform = listing.get("platform") or "unknown"
             url = listing.get("url") or ""
-            lines.append(f"— {title}\n  Цена: {price}\n  {url}")
+            lines.append(f"— {title}\n  Цена: {price}\n  Платформа: {platform}\n  {url}")
 
         text = "\n\n".join(lines)
         await self._send_message(int(vk_user_id), text)
@@ -171,33 +165,12 @@ class EmailNotifier:
         for listing in listings:
             title = listing.get("title") or "Новое объявление"
             price = format_price(listing.get("price"))
+            platform = listing.get("platform") or "unknown"
             url = listing.get("url") or ""
-            text_body += f"— {title}\n  Цена: {price}\n  {url}\n\n"
+            text_body += f"— {title}\n  Цена: {price}\n  Платформа: {platform}\n  {url}\n\n"
 
         await self._send(email, subject, html_body, text_body)
         logger.info("Email batch notification sent to %s (%d listings)", email, count)
-
-    async def send_listing(self, config: dict, event: dict) -> None:
-        email = config.get("email")
-        if not email:
-            raise ValueError("Email channel config requires 'email' field")
-
-        listing = event.get("listing") or {}
-        task_name = event.get("task_name") or "без названия"
-        title = listing.get("title") or "Новое объявление"
-        price = format_price(listing.get("price"))
-        url = listing.get("url") or ""
-        platform = listing.get("platform") or event.get("platform") or "unknown"
-
-        subject = f"Новое объявление: {title}"
-        html_body = _listing_html(title, price, platform, task_name, url)
-        text_body = (
-            f"Найдено новое объявление\n\n"
-            f"{title}\nЦена: {price}\nПлатформа: {platform}\nЗадача: {task_name}\n{url}"
-        )
-
-        await self._send(email, subject, html_body, text_body)
-        logger.info("Email listing notification sent to %s", email)
 
     async def send_verification_code(self, email: str, code: str, expires_in_minutes: int = 10) -> None:
         subject = "Код подтверждения"
@@ -263,39 +236,21 @@ def _html_doc(title: str, body: str) -> str:
     )
 
 
-def _listing_html(title: str, price: str, platform: str, task_name: str, url: str) -> str:
-    body = (
-        "<p>Найдено новое объявление по вашей задаче мониторинга.</p>"
-        f'<div class="field"><span class="label">Название</span><br>'
-        f'<span class="value">{html.escape(title)}</span></div>'
-        f'<div class="field"><span class="label">Цена</span><br>'
-        f'<span class="value price">{html.escape(price)}</span></div>'
-        f'<div class="field"><span class="label">Платформа</span><br>'
-        f'<span class="value">{html.escape(platform)}</span></div>'
-        f'<div class="field"><span class="label">Задача</span><br>'
-        f'<span class="value">{html.escape(task_name)}</span></div>'
-    )
-    if url:
-        body += (
-            f'<div class="link-block">'
-            f'<a class="btn" href="{html.escape(url)}">Просмотреть</a>'
-            f"</div>"
-        )
-    return _html_doc("Новое объявление", body)
-
-
 def _listings_batch_html(task_name: str, listings: list[dict]) -> str:
     count = len(listings)
     body = f"<p>Найдено <strong>{count}</strong> новых объявлений по задаче <strong>{html.escape(task_name)}</strong>.</p>"
     for listing in listings:
         title = listing.get("title") or "Новое объявление"
         price = format_price(listing.get("price"))
+        platform = listing.get("platform") or "unknown"
         url = listing.get("url") or ""
         body += (
             '<div style="border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;margin:12px 0;">'
             f'<div class="field"><span class="value">{html.escape(title)}</span></div>'
             f'<div class="field"><span class="label">Цена: </span>'
             f'<span class="value price">{html.escape(price)}</span></div>'
+            f'<div class="field"><span class="label">Платформа: </span>'
+            f'<span class="value">{html.escape(platform)}</span></div>'
         )
         if url:
             body += f'<div class="link-block"><a class="btn" href="{html.escape(url, quote=True)}">Просмотреть</a></div>'
@@ -358,7 +313,6 @@ def format_listing_message(event: dict) -> str:
 
 
 def _plural_ru(n: int, form1: str, form2: str, form5: str) -> str:
-    """Return Russian plural form: 1 объявление, 2 объявления, 5 объявлений."""
     n = abs(n) % 100
     if 11 <= n <= 19:
         return form5

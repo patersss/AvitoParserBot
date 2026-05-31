@@ -32,11 +32,8 @@ class NotificationService:
 
     async def handle_event(self, payload: dict):
         event_type = payload.get("event_type") or payload.get("type")
-        if event_type == "listings.batch_found":
+        if event_type in {"listing.found", "listings.batch_found"}:
             await self._handle_listings_batch_found(payload)
-            return
-        if event_type == "listing.found":
-            await self._handle_listing_found(payload)
             return
         if event_type in {"notification_channel.upserted", "notification.channel.upserted"}:
             await self._handle_channel_upserted(payload)
@@ -122,27 +119,6 @@ class NotificationService:
                 await self.email.send_listings_batch(channel.config, payload)
             elif channel.type == "vk":
                 await self.vk.send_listings_batch(channel.config, payload)
-            else:
-                logger.info("Unsupported channel type %s for user %s", channel.type, user_id)
-
-    async def _handle_listing_found(self, payload: dict):
-        """Backward-compatible handler for single listing.found events."""
-        user_id = payload.get("user_id")
-        if not user_id:
-            raise ValueError("listing.found requires user_id")
-
-        channels = await self.channels.get_active_channels(user_id)
-        if not channels:
-            logger.info("No active notification channels for user %s", user_id)
-            return
-
-        for channel in channels:
-            if channel.type == "telegram":
-                await self.telegram.send_listing(channel.config, payload)
-            elif channel.type == "email":
-                await self.email.send_listing(channel.config, payload)
-            elif channel.type == "vk":
-                await self.vk.send_listing(channel.config, payload)
             else:
                 logger.info("Unsupported channel type %s for user %s", channel.type, user_id)
 
